@@ -1,0 +1,243 @@
+@page "/apps/{Id:guid}"
+@inject HttpClient Http
+@inject IJSRuntime JSRuntime
+@using System.Threading
+@using Orion.Core.Models
+@using Orion.Core.Services
+
+<PageTitle>@(app?.Name ?? "Loading...") - Orion Base Control</PageTitle>
+
+<div class="py-12 pl-12 pr-12 w-full">
+    @if (error != null)
+    {
+        <div class="text-error bg-error/10 border border-error/20 p-6 rounded-xl">@error</div>
+    }
+    else if (app == null)
+    {
+        <div class="flex justify-center my-32">
+            <div class="animate-pulse text-secondary tracking-widest uppercase text-sm">Loading Application Data...</div>
+        </div>
+    }
+    else
+    {
+        <header class="mb-12 animate-[fadeInDown_0.6s_ease_forwards]">
+            <div class="flex items-center gap-4 mb-4 text-sm font-medium">
+                <a href="/" class="text-secondary hover:text-white transition-colors flex items-center gap-2">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-arrow-left"><path d="m12 19-7-7 7-7"/><path d="M19 12H5"/></svg>
+                    Control Plane
+                </a>
+                <span class="text-white/20">/</span>
+                <span class="text-white">Apps</span>
+                <span class="text-white/20">/</span>
+                <span class="text-accent-cyan">@app.Name</span>
+            </div>
+            
+            <div class="flex justify-between items-start">
+                <div>
+                    <h1 class="text-4xl font-bold tracking-tight mb-2">@app.Name</h1>
+                    <div class="flex items-center gap-3 font-mono text-xs text-secondary">
+                        <span>ID: @app.Id</span>
+                        @if (metrics != null)
+                        {
+                            <span class="w-1 h-1 rounded-full bg-white/20"></span>
+                            <span class="text-accent-cyan">@Math.Round(metrics.CpuUsage, 1)% CPU</span>
+                            <span class="w-1 h-1 rounded-full bg-white/20"></span>
+                            <span class="text-accent-purple">@metrics.MemoryUsageMb MB RAM</span>
+                        }
+                    </div>
+                </div>
+                <div class="flex gap-3">
+                    <OrionButton Variant="OrionButton.ButtonVariant.Default" OnClick="@(() => OpenApp(app.Name))">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-external-link mr-2"><path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/></svg>
+                        Open Portal
+                    </OrionButton>
+                </div>
+            </div>
+        </header>
+
+        <!-- Tabs -->
+        <div class="flex gap-8 border-b border-white/10 mb-8 animate-[fadeInUp_0.6s_ease_0.1s_forwards]">
+            @foreach (var tab in new[] { "Overview", "Application Logs", "Telemetry", "Secrets" })
+            {
+                <button class="pb-4 text-sm font-medium transition-colors border-b-2 @(currentTab == tab ? "border-accent-cyan text-white shadow-[0_1px_10px_rgba(0,230,243,0.5)]" : "border-transparent text-secondary hover:text-white")"
+                        @onclick="() => currentTab = tab">
+                    @tab
+                </button>
+            }
+        </div>
+
+        <div class="animate-[fadeInUp_0.6s_ease_0.2s_forwards]">
+            @if (currentTab == "Overview")
+            {
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
+                    <OrionCard Class="bg-white/[0.02] border-white/[0.05]">
+                        <h3 class="text-lg font-semibold mb-6">Application Specifications</h3>
+                        <div class="space-y-4 text-sm">
+                            <div class="flex justify-between border-b border-white/5 pb-4">
+                                <span class="text-secondary">Image Repository</span>
+                                <span class="font-mono text-white text-right">@app.RepoUrl</span>
+                            </div>
+                            <div class="flex justify-between border-b border-white/5 pb-4">
+                                <span class="text-secondary">Commissioned</span>
+                                <span class="text-white">@app.CreatedAt.ToString("yyyy-MM-dd HH:mm:ss")</span>
+                            </div>
+                            <div class="flex justify-between pb-2">
+                                <span class="text-secondary">Routing Policy</span>
+                                <span class="text-accent-cyan font-mono">Dynamic Base</span>
+                            </div>
+                        </div>
+                    </OrionCard>
+
+                    <OrionCard Class="bg-white/[0.02] border-white/[0.05]">
+                        <h3 class="text-lg font-semibold mb-6">Deployments</h3>
+                        @if (deployments == null)
+                        {
+                            <div class="text-sm text-secondary">Loading deployments...</div>
+                        }
+                        else if (!deployments.Any())
+                        {
+                            <div class="text-sm text-secondary">No deployments found.</div>
+                        }
+                        else
+                        {
+                            <div class="space-y-3">
+                                @foreach (var dep in deployments.OrderByDescending(d => d.CreatedAt).Take(5))
+                                {
+                                    <div class="flex justify-between items-center p-3 rounded-lg bg-black/20 border border-white/5">
+                                        <div class="flex flex-col">
+                                            <span class="font-mono text-xs text-white">@dep.Id.ToString().Substring(0, 8)</span>
+                                            <span class="text-xs text-secondary mt-1">@dep.CreatedAt.ToString("MMM dd HH:mm")</span>
+                                        </div>
+                                        <OrionBadge Variant="@(dep.Status == DeploymentStatus.Running ? OrionBadge.BadgeVariant.Success : OrionBadge.BadgeVariant.Default)">@dep.Status</OrionBadge>
+                                    </div>
+                                }
+                            </div>
+                        }
+                    </OrionCard>
+                </div>
+            }
+            else if (currentTab == "Application Logs")
+            {
+                <OrionCard Class="bg-[#0a0a0c] border-white/10 p-0 overflow-hidden font-mono text-xs max-h-[600px] flex flex-col">
+                    <div class="bg-white/5 p-4 border-b border-white/10 flex justify-between items-center shrink-0">
+                        <span class="text-secondary font-sans font-medium">Real-time Instance Logs</span>
+                        <div class="flex items-center gap-2">
+                            <span class="relative flex h-2 w-2">
+                              <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-success opacity-75"></span>
+                              <span class="relative inline-flex rounded-full h-2 w-2 bg-success"></span>
+                            </span>
+                            <span class="text-success tracking-widest uppercase text-[10px]">Streaming</span>
+                        </div>
+                    </div>
+                    <div class="p-6 overflow-y-auto grow space-y-1">
+                        @if (logs.Count == 0)
+                        {
+                            <div class="text-secondary text-center py-10 opacity-50">Waiting for flight data...</div>
+                        }
+                        @foreach(var log in logs)
+                        {
+                            <div class="flex gap-4">
+                                <span class="text-secondary shrink-0">@log.Timestamp.ToString("HH:mm:ss.fff")</span>
+                                <span class="@(log.Level == "Error" ? "text-error" : log.Level == "Warn" ? "text-warning" : "text-white/80")">@log.Message</span>
+                            </div>
+                        }
+                    </div>
+                </OrionCard>
+            }
+            else if (currentTab == "Telemetry")
+            {
+                <OrionCard Class="bg-white/[0.02] border-white/[0.05]">
+                    <div class="text-secondary text-center py-20">Spaceflight telemetry to be implemented.</div>
+                </OrionCard>
+            }
+            else if (currentTab == "Secrets")
+            {
+                <OrionCard Class="bg-white/[0.02] border-white/[0.05]">
+                    <div class="flex justify-between items-center mb-6">
+                        <h3 class="text-lg font-semibold">Environment Secrets</h3>
+                        <OrionButton Variant="OrionButton.ButtonVariant.Primary" Class="!mt-0 py-1 px-4">Add Secret</OrionButton>
+                    </div>
+                    @if (secrets == null)
+                    {
+                        <div class="text-secondary">Loading deep-space keys...</div>
+                    }
+                    else if (secrets.Count == 0)
+                    {
+                        <div class="text-secondary text-center py-12 border border-dashed border-white/10 rounded-xl">No encrypted keys configured for this application.</div>
+                    }
+                    else
+                    {
+                        <div class="rounded-xl border border-white/10 overflow-hidden">
+                            <table class="w-full text-sm text-left">
+                                <thead class="text-xs text-secondary uppercase bg-white/5 border-b border-white/10">
+                                    <tr>
+                                        <th scope="col" class="px-6 py-3 font-medium">Key</th>
+                                        <th scope="col" class="px-6 py-3 font-medium">Value</th>
+                                        <th scope="col" class="px-6 py-3 font-medium text-right">Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    @foreach(var kvp in secrets)
+                                    {
+                                        <tr class="bg-black/20 border-b border-white/5 last:border-0 hover:bg-white/5 transition-colors">
+                                            <td class="px-6 py-4 font-mono font-medium text-white">@kvp.Key</td>
+                                            <td class="px-6 py-4 font-mono text-secondary">@kvp.Value</td>
+                                            <td class="px-6 py-4 text-right">
+                                                <button class="text-error hover:text-white transition-colors text-xs font-bold uppercase tracking-widest">Delete</button>
+                                            </td>
+                                        </tr>
+                                    }
+                                </tbody>
+                            </table>
+                        </div>
+                    }
+                </OrionCard>
+            }
+        </div>
+    }
+</div>
+
+@code {
+    [Parameter] public Guid Id { get; set; }
+
+    private string currentTab = "Overview";
+    private Orion.Core.Models.App? app;
+    private string? error;
+    
+    private List<Deployment>? deployments;
+    private Dictionary<string, string>? secrets;
+    private AppMetrics? metrics;
+    private List<LogEntry> logs = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadAppDetails();
+    }
+
+    private async Task LoadAppDetails()
+    {
+        try
+        {
+            app = await Http.GetFromJsonAsync<Orion.Core.Models.App>($"/apps/{Id}", Orion.Core.Serialization.OrionJsonContext.Default.App);
+            if (app != null)
+            {
+                var deps = await Http.GetFromJsonAsync<IEnumerable<Deployment>>($"/apps/{Id}/deployments", Orion.Core.Serialization.OrionJsonContext.Default.IEnumerableDeployment);
+                deployments = deps?.ToList();
+                secrets = await Http.GetFromJsonAsync<Dictionary<string, string>>($"/apps/{Id}/secrets", Orion.Core.Serialization.OrionJsonContext.Default.DictionaryStringString);
+                
+                try {
+                    metrics = await Http.GetFromJsonAsync<AppMetrics>($"/apps/{Id}/metrics", Orion.Core.Serialization.OrionJsonContext.Default.AppMetrics);
+                } catch { }
+            }
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+        }
+    }
+
+    private async Task OpenApp(string name)
+    {
+        await JSRuntime.InvokeVoidAsync("open", $"http://{name.ToLower()}.lvh.me:5050", "_blank");
+    }
+}

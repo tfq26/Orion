@@ -1,0 +1,13 @@
+{
+  "name": "orion-platform",
+  "version": "1.0.0",
+  "description": "Orion Hybrid Cloud Platform",
+  "main": "bootstrap.js",
+  "scripts": {
+    "start": "node bootstrap.js",
+    "clean": "npm stop && find . -name \"*.db\" -delete && rm -rf local_tmp .orion_storage",
+    "stop": "node -e \"const { execSync } = require('child_process'); [5000, 5001].forEach(p => { try { const pids = execSync('lsof -t -i :' + p).toString().trim().split('\\n'); pids.forEach(pid => pid && execSync('kill -9 ' + pid)); } catch(e){} })\""
+  },
+  "author": "",
+  "license": "ISC"
+}

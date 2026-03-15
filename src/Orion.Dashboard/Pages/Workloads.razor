@@ -1,0 +1,75 @@
+@page "/workloads"
+@inject HttpClient Http
+@using Orion.Core.Models
+
+<div class="py-12 pl-12 pr-12 w-full">
+    <header class="flex justify-between items-center mb-12 animate-[fadeInDown_0.8s_ease_forwards]">
+        <div class="flex flex-col gap-1">
+            <h1 class="text-3xl font-bold tracking-tight">Apps</h1>
+            <p class="text-secondary text-sm">Manage and monitor distributed applications in the control plane.</p>
+        </div>
+        <OrionButton Variant="OrionButton.ButtonVariant.Primary">
+            <svg class="mr-2" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+            Deploy Application
+        </OrionButton>
+    </header>
+
+    <div class="grid grid-cols-1 gap-4 opacity-0 animate-[fadeInUp_0.8s_ease_0.2s_forwards]">
+        @if (apps == null)
+        {
+            <div class="p-12 text-center text-secondary animate-pulse">Scanning Network for Applications...</div>
+        }
+        else if (apps.Count == 0)
+        {
+            <OrionCard Class="text-center py-20">
+                <div class="text-secondary mb-4">No active applications found in the network.</div>
+                <OrionButton Variant="OrionButton.ButtonVariant.Ghost">Initialize Registry</OrionButton>
+            </OrionCard>
+        }
+        else
+        {
+            @foreach (var app in apps)
+            {
+                <OrionCard Class="hover:border-accent-cyan/30 cursor-pointer group transition-all" @onclick='() => Navigation.NavigateTo($"/apps/{app.Id}")'>
+                    <div class="flex items-center justify-between">
+                        <div class="flex items-center gap-4">
+                            <div class="w-10 h-10 rounded-lg bg-surface flex items-center justify-center border border-border group-hover:border-accent-cyan transition-colors">
+                                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-accent-cyan"><path d="m7.5 4.27 9 5.15"/><path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"/><path d="m3.3 7 8.7 5 8.7-5"/><path d="M12 22V12"/></svg>
+                            </div>
+                            <div>
+                                <h3 class="font-bold text-lg">@app.Name</h3>
+                                <p class="text-xs text-secondary font-mono">@app.Id</p>
+                            </div>
+                        </div>
+                        <div class="flex items-center gap-8">
+                            <div class="text-right">
+                                <div class="text-xs text-secondary uppercase tracking-widest font-bold mb-1">Status</div>
+                                <OrionBadge Variant="@(app.Status == "Running" ? OrionBadge.BadgeVariant.Success : OrionBadge.BadgeVariant.Default)" ShowDot="true">@app.Status</OrionBadge>
+                            </div>
+                            <div class="text-right">
+                                <div class="text-xs text-secondary uppercase tracking-widest font-bold mb-1">Scale</div>
+                                <div class="font-mono text-accent-cyan font-bold">@app.ActiveReplicas Instances</div>
+                            </div>
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-secondary opacity-0 group-hover:opacity-100 transition-opacity ml-4"><path d="m9 18 6-6-6-6"/></svg>
+                        </div>
+                    </div>
+                </OrionCard>
+            }
+        }
+    </div>
+</div>
+
+@code {
+    [Microsoft.AspNetCore.Components.Inject] NavigationManager Navigation { get; set; } = default!;
+    private List<AppSummary>? apps;
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            var result = await Http.GetFromJsonAsync("/dashboard/summary", Orion.Core.Serialization.OrionJsonContext.Default.DashboardSummary);
+            apps = result?.Apps;
+        }
+        catch { }
+    }
+}

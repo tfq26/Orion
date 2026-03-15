@@ -1,0 +1,39 @@
+<button type="@Type"
+        class="@GetClasses()"
+        disabled="@Disabled"
+        @onclick="OnClick">
+    @ChildContent
+</button>
+
+@code {
+    [Parameter] public RenderFragment? ChildContent { get; set; }
+    [Parameter] public EventCallback OnClick { get; set; }
+    [Parameter] public string Type { get; set; } = "button";
+    [Parameter] public bool Disabled { get; set; }
+    [Parameter] public ButtonVariant Variant { get; set; } = ButtonVariant.Default;
+    [Parameter] public string Class { get; set; } = "";
+
+    public enum ButtonVariant
+    {
+        Default,
+        Primary,
+        Danger,
+        Ghost
+    }
+
+    private string GetClasses()
+    {
+        var baseClasses = "inline-flex items-center justify-center rounded-lg text-sm font-medium transition-all focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-gray-400 disabled:pointer-events-none disabled:opacity-50 px-4 py-2 mt-4 duration-200 border";
+        
+        var variantClasses = Variant switch
+        {
+            ButtonVariant.Default => "bg-surface-elevated border-border text-primary hover:bg-surface hover:border-border-light",
+            ButtonVariant.Primary => "bg-accent-cyan text-background border-accent-cyan hover:bg-transparent hover:text-accent-cyan",
+            ButtonVariant.Danger => "bg-error/5 text-error border-error/20 hover:bg-error hover:text-white",
+            ButtonVariant.Ghost => "border-transparent bg-transparent hover:bg-surface-elevated text-primary",
+            _ => ""
+        };
+
+        return $"{baseClasses} {variantClasses} {Class}";
+    }
+}

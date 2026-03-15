@@ -1,0 +1,28 @@
+<div class="relative flex items-center w-full @Class">
+    @if (Icon != null)
+    {
+        <span class="absolute left-3 text-secondary z-10">
+            @Icon
+        </span>
+    }
+    <input type="@Type"
+           class="w-full bg-surface border border-border rounded-lg py-2 text-sm text-primary placeholder-secondary focus:outline-none focus:border-accent-cyan/40 focus:ring-0 transition-all duration-200 @(Icon != null ? "pl-10 pr-4" : "px-4")"
+           placeholder="@Placeholder"
+           value="@Value"
+           @oninput="OnInput" />
+</div>
+
+@code {
+    [Parameter] public string Type { get; set; } = "text";
+    [Parameter] public string Placeholder { get; set; } = "Search...";
+    [Parameter] public string Value { get; set; } = "";
+    [Parameter] public EventCallback<ChangeEventArgs> ValueChanged { get; set; }
+    [Parameter] public string Class { get; set; } = "";
+    [Parameter] public RenderFragment? Icon { get; set; }
+
+    private async Task OnInput(ChangeEventArgs e)
+    {
+        Value = e.Value?.ToString() ?? "";
+        await ValueChanged.InvokeAsync(e);
+    }
+}

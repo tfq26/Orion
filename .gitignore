@@ -1,0 +1,63 @@
+## [Visual Studio / .NET]
+bin/
+obj/
+*.user
+*.userosscache
+*.sln.docstates
+
+# User-specific files
+*.rsuser
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+
+# Build results
+[Dd]ebug/
+[Dd]ebugPublic/
+[Rr]elease/
+[Rr]eleases/
+x64/
+x86/
+[Aa][Rr][Mm]/
+[Aa][Rr][Mm]64/
+bld/
+[Bb]in/
+[Oo]bj/
+[Ll]og/
+[Ll]ogs/
+
+# NuGet Packages
+*.nupkg
+# NuGet Symbol Packages
+*.snupkg
+# Custom package directories
+nuget_packages/
+nuget_packages_fresh/
+nuget_tmp/
+nuget_tmp_fresh/
+
+## [Node]
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+.env*.local
+dist/
+.output/
+.nuxt/
+.next/
+.cache/
+build/
+
+## [MacOS]
+.DS_Store
+
+## [Project Specific]
+build_tmp/
+local_tmp/
+verify_db.cs
+*.db
+*.dat
+keys/
