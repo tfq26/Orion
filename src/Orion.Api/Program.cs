@@ -27,7 +27,17 @@ builder.WebHost.ConfigureKestrel(options =>
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 builder.Services.AddHttpClient();
-builder.Services.AddControllersWithViews();
+builder.Services.AddControllers();
+builder.Services.AddCors(options =>
+{
+    options.AddDefaultPolicy(policy =>
+    {
+        policy.WithOrigins("http://localhost:3000")
+            .AllowAnyHeader()
+            .AllowAnyMethod()
+            .AllowCredentials();
+    });
+});
 
 // Register Orion Services
 builder.Services.AddSingleton<IMetadataService>(new SqliteMetadataService("orion_metadata.db"));
@@ -156,10 +166,8 @@ _ = Task.Run(async () =>
     }
 });
 
-app.UseBlazorFrameworkFiles();
-app.UseStaticFiles();
-
 app.UseRouting();
+app.UseCors();
 app.UseAuthentication();
 app.UseAuthorization();
 
@@ -232,13 +240,13 @@ app.MapGet("/auth/callback", async (string code, IHttpClientFactory httpClientFa
 
     await context.SignInAsync(Microsoft.AspNetCore.Authentication.Cookies.CookieAuthenticationDefaults.AuthenticationScheme, principal);
 
-    return Results.Redirect("/");
+    return Results.Redirect("http://localhost:3000/");
 });
 
 app.MapGet("/auth/logout", async (HttpContext context) =>
 {
     await context.SignOutAsync(Microsoft.AspNetCore.Authentication.Cookies.CookieAuthenticationDefaults.AuthenticationScheme);
-    return Results.Redirect("/");
+    return Results.Redirect("http://localhost:3000/");
 });
 
 app.MapGet("/auth/user", (System.Security.Claims.ClaimsPrincipal user) =>
@@ -534,10 +542,5 @@ app.MapGet("/pilot/report", async (IPilotService pilot) =>
 })
 .WithName("GetPilotReport")
 .WithOpenApi();
-
-app.UseBlazorFrameworkFiles();
-app.UseStaticFiles();
-
-app.MapFallbackToFile("index.html");
 
 app.Run();

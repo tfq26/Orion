@@ -64,7 +64,7 @@ function start() {
 }
 
 function dashboard() {
-  const url = 'http://localhost:5031';
+  const url = 'http://localhost:3000';
   console.log(`✨ Opening Orion Web Dashboard at ${url}...`);
   
   const startCmd = process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'start' : 'xdg-open';
