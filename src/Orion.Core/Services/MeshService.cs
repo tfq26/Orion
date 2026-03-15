@@ -18,14 +18,15 @@ namespace Orion.Core.Services
     {
         private readonly ILogger<MeshService> _logger;
         private readonly IMetadataService _db;
-        private readonly string _headscaleUrl;
-        private readonly string _apiKey;
+        private readonly INodeServiceClient _nodeClient;
+        private string _masterUrl;
+        private Guid _nodeId = Guid.NewGuid();
 
-        public MeshService(ILogger<MeshService> logger, IMetadataService db)
+        public MeshService(ILogger<MeshService> logger, IMetadataService db, INodeServiceClient nodeClient)
         {
             _logger = logger;
             _db = db;
-            // In a real prod setup, these would come from env or secrets
+            _nodeClient = nodeClient;
             _headscaleUrl = Environment.GetEnvironmentVariable("HEADSCALE_URL") ?? "http://localhost:8080";
             _apiKey = Environment.GetEnvironmentVariable("HEADSCALE_API_KEY") ?? "mock_key";
         }
@@ -33,24 +34,51 @@ namespace Orion.Core.Services
         public async Task InitializeAsync()
         {
             _logger.LogInformation("MeshService initializing...");
-            // In simulation mode, we just check connectivity
-            _logger.LogInformation($"[MESH] Connecting to Headscale at {_headscaleUrl}");
-            
-            // For first boot, register the local node as a seed peer
             var peers = await _db.GetPeersAsync();
             if (!System.Linq.Enumerable.Any(peers))
             {
+                // Register local node if nothing exists (Seed/Master node)
                 var localNode = new Peer
                 {
-                    Name = "orion-master-01",
-                    IpAddress = "100.64.0.1",
+                    Name = Environment.MachineName.ToLower(),
+                    IpAddress = "100.64.0.1", // Master mesh IP
                     Status = "Online",
                     Tags = "master, control-plane",
                     LastSeen = DateTime.UtcNow
                 };
                 await _db.CreatePeerAsync(localNode);
-                _logger.LogInformation($"[MESH] Registered local node: {localNode.Name}");
+                _logger.LogInformation($"[MESH] Initialized as Master Node: {localNode.Name}");
             }
+        }
+
+        public async Task<bool> JoinClusterAsync(string masterUrl, string authKey)
+        {
+            _logger.LogInformation($"[MESH] Attempting to join cluster via master: {masterUrl}");
+            
+            // 1. Join Mesh (Simulation: Connect to Headscale)
+            _logger.LogInformation($"[MESH] Joining virtual private network via {authKey}");
+            var meshIp = "100.64.0." + new Random().Next(2, 254);
+
+            // 2. Register with Orion Master via gRPC
+            var request = new JoinRequest
+            {
+                NodeId = _nodeId.ToString(),
+                NodeName = Environment.MachineName.ToLower(),
+                IpAddress = meshIp,
+                CpuCores = Environment.ProcessorCount,
+                MemoryMb = 8192 // Simulated RAM
+            };
+
+            var response = await _nodeClient.JoinAsync(masterUrl, request);
+            if (response.Success)
+            {
+                _logger.LogInformation($"[MESH] Successfully joined cluster! Message: {response.Message}");
+                _masterUrl = masterUrl;
+                return true;
+            }
+
+            _logger.LogError($"[MESH] Failed to join cluster: {response.Message}");
+            return false;
         }
 
         public async Task<IEnumerable<Peer>> GetPeersAsync()
@@ -60,8 +88,7 @@ namespace Orion.Core.Services
 
         public Task<string> GetAuthKeyAsync()
         {
-            // This would call Headscale API to generate a pre-auth key
-            return Task.FromResult("mkey:bootstrap-auth-token-simulated");
+            return Task.FromResult("mkey:bootstrap-auth-token-simulated-" + Guid.NewGuid().ToString()[..8]);
         }
     }
 }

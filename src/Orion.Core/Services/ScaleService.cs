@@ -17,17 +17,23 @@ namespace Orion.Core.Services
         private readonly IMetadataService _db;
         private readonly IContainerService _containerService;
         private readonly ISecretService _secretService;
+        private readonly ISchedulerService _scheduler;
+        private readonly INodeServiceClient _nodeClient;
         private readonly ILogger<ScaleService> _logger;
 
         public ScaleService(
             IMetadataService db, 
             IContainerService containerService, 
             ISecretService secretService,
+            ISchedulerService scheduler,
+            INodeServiceClient nodeClient,
             ILogger<ScaleService> logger)
         {
             _db = db;
             _containerService = containerService;
             _secretService = secretService;
+            _scheduler = scheduler;
+            _nodeClient = nodeClient;
             _logger = logger;
         }
 
@@ -61,22 +67,63 @@ namespace Orion.Core.Services
 
                 for (int i = 0; i < toAdd; i++)
                 {
+                    // 1. Ask Scheduler where to put this
+                    var targetNode = await _scheduler.ScheduleAsync(app);
+                    var instanceName = $"{app.Name.ToLower()}-{Guid.NewGuid().ToString()[..8]}-{targetNode.Name.ToLower()}";
                     var imageTag = latestDeployment.ImageTag ?? $"orion/{app.Name.ToLower()}:latest";
-                    var instanceName = $"orion-{app.Name.ToLower()}-replica-{Guid.NewGuid().ToString()[..8]}";
-                    
-                    var result = await _containerService.StartContainerAsync(imageTag, instanceName, secrets);
+
+                    int port = 0;
+                    int pid = 0;
+
+                    if (targetNode.IpAddress == "100.64.0.1") // Local (Master)
+                    {
+                        var result = await _containerService.StartContainerAsync(
+                            imageTag, 
+                            instanceName, 
+                            secrets, 
+                            app.RequiredCpuCores, 
+                            app.RequiredMemoryMb);
+                        port = result.Port;
+                        pid = result.ProcessId;
+                    }
+                    else // Remote Worker
+                    {
+                        var workerUrl = $"http://{targetNode.IpAddress}:5031";
+                        var request = new WorkloadRequest
+                        {
+                            AppId = appId.ToString(),
+                            DeploymentId = latestDeployment.Id.ToString(),
+                            ImageTag = imageTag,
+                            ContainerName = instanceName,
+                            CpuCores = app.RequiredCpuCores ?? 0,
+                            MemoryMb = app.RequiredMemoryMb ?? 0
+                        };
+                        foreach (var s in secrets) request.EnvVars.Add(s.Key, s.Value);
+
+                        var response = await _nodeClient.StartWorkloadAsync(workerUrl, request);
+                        if (!response.Success)
+                        {
+                            _logger.LogError($"Failed to start remote workload on {targetNode.Name}: {response.Message}");
+                            continue;
+                        }
+                        port = response.Port;
+                        pid = response.ProcessId;
+                    }
                     
                     var instance = new Instance
                     {
                         AppId = appId,
                         DeploymentId = latestDeployment.Id,
                         ContainerName = instanceName,
-                        Port = result.Port,
-                        ProcessId = result.ProcessId,
-                        Status = "Running"
+                        Port = port,
+                        ProcessId = pid,
+                        AssignedCpuCores = app.RequiredCpuCores,
+                        AssignedMemoryMb = app.RequiredMemoryMb,
+                        Status = "Running",
+                        OwnerId = app.OwnerId
                     };
                     await _db.CreateInstanceAsync(instance);
-                    _logger.LogInformation($"Scaled up: Added instance {instance.Id} on port {result.Port} (PID: {result.ProcessId})");
+                    _logger.LogInformation($"Scaled up: Added instance {instance.Id} on node {targetNode.Name} (Port: {port})");
                 }
             }
             else if (targetReplicaCount < currentCount && targetReplicaCount >= 0)

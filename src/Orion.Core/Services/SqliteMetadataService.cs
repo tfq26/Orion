@@ -34,6 +34,8 @@ namespace Orion.Core.Services
                     build_command TEXT,
                     run_command TEXT,
                     build_folder TEXT,
+                    required_cpu_cores INTEGER,
+                    required_memory_mb INTEGER,
                     created_at TEXT
                 );
 
@@ -62,6 +64,8 @@ namespace Orion.Core.Services
                     container_name TEXT,
                     port INTEGER,
                     process_id INTEGER,
+                    assigned_cpu_cores INTEGER,
+                    assigned_memory_mb INTEGER,
                     status TEXT,
                     created_at TEXT
                 );
@@ -120,6 +124,34 @@ namespace Orion.Core.Services
                     await alterCmd.ExecuteNonQueryAsync();
                 }
             }
+
+            // Migration: Add resource cols to apps and instances
+            var resourceMigrations = new[] { 
+                ("apps", "required_cpu_cores", "INTEGER"), 
+                ("apps", "required_memory_mb", "INTEGER"),
+                ("instances", "assigned_cpu_cores", "INTEGER"),
+                ("instances", "assigned_memory_mb", "INTEGER")
+            };
+
+            foreach (var mig in resourceMigrations)
+            {
+                using var checkCmd = connection.CreateCommand();
+                checkCmd.CommandText = $"PRAGMA table_info({mig.Item1});";
+                using var reader = await checkCmd.ExecuteReaderAsync();
+                bool hasCol = false;
+                while (await reader.ReadAsync())
+                {
+                    if (reader.GetString(1) == mig.Item2) hasCol = true;
+                }
+                reader.Close();
+
+                if (!hasCol)
+                {
+                    using var alterCmd = connection.CreateCommand();
+                    alterCmd.CommandText = $"ALTER TABLE {mig.Item1} ADD COLUMN {mig.Item2} {mig.Item3};";
+                    await alterCmd.ExecuteNonQueryAsync();
+                }
+            }
         }
 
         public async Task<IEnumerable<App>> GetAppsAsync(string? userId = null)
@@ -129,7 +161,7 @@ namespace Orion.Core.Services
             await connection.OpenAsync();
 
             using var cmd = connection.CreateCommand();
-            cmd.CommandText = "SELECT id, name, repo_url, owner_id, build_command, run_command, build_folder, created_at FROM apps";
+            cmd.CommandText = "SELECT id, name, repo_url, owner_id, build_command, run_command, build_folder, created_at, required_cpu_cores, required_memory_mb FROM apps";
             if (!string.IsNullOrEmpty(userId))
             {
                 cmd.CommandText += " WHERE owner_id = @userId";
@@ -148,7 +180,9 @@ namespace Orion.Core.Services
                     BuildCommand = reader.IsDBNull(4) ? null : reader.GetString(4),
                     RunCommand = reader.IsDBNull(5) ? null : reader.GetString(5),
                     BuildFolder = reader.IsDBNull(6) ? null : reader.GetString(6),
-                    CreatedAt = DateTime.Parse(reader.GetString(7))
+                    CreatedAt = DateTime.Parse(reader.GetString(7)),
+                    RequiredCpuCores = reader.IsDBNull(8) ? null : reader.GetInt32(8),
+                    RequiredMemoryMb = reader.IsDBNull(9) ? null : reader.GetInt32(9)
                 });
             }
             return apps;
@@ -159,8 +193,7 @@ namespace Orion.Core.Services
             using var connection = new SqliteConnection(_connectionString);
             await connection.OpenAsync();
 
-            using var cmd = connection.CreateCommand();
-            cmd.CommandText = "INSERT INTO apps (id, name, repo_url, owner_id, build_command, run_command, build_folder, created_at) VALUES (@id, @name, @repo, @owner, @build, @run, @folder, @created)";
+            cmd.CommandText = "INSERT INTO apps (id, name, repo_url, owner_id, build_command, run_command, build_folder, created_at, required_cpu_cores, required_memory_mb) VALUES (@id, @name, @repo, @owner, @build, @run, @folder, @created, @cpu, @mem)";
             cmd.Parameters.AddWithValue("@id", app.Id.ToString());
             cmd.Parameters.AddWithValue("@name", app.Name);
             cmd.Parameters.AddWithValue("@repo", app.RepoUrl);
@@ -169,6 +202,8 @@ namespace Orion.Core.Services
             cmd.Parameters.AddWithValue("@run", (object?)app.RunCommand ?? DBNull.Value);
             cmd.Parameters.AddWithValue("@folder", (object?)app.BuildFolder ?? DBNull.Value);
             cmd.Parameters.AddWithValue("@created", app.CreatedAt.ToString("o"));
+            cmd.Parameters.AddWithValue("@cpu", (object?)app.RequiredCpuCores ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("@mem", (object?)app.RequiredMemoryMb ?? DBNull.Value);
             await cmd.ExecuteNonQueryAsync();
         }
 
@@ -178,13 +213,15 @@ namespace Orion.Core.Services
             await connection.OpenAsync();
 
             using var cmd = connection.CreateCommand();
-            cmd.CommandText = "UPDATE apps SET name = @name, repo_url = @repo, build_command = @build, run_command = @run, build_folder = @folder WHERE id = @id";
+            cmd.CommandText = "UPDATE apps SET name = @name, repo_url = @repo, build_command = @build, run_command = @run, build_folder = @folder, required_cpu_cores = @cpu, required_memory_mb = @mem WHERE id = @id";
             cmd.Parameters.AddWithValue("@id", app.Id.ToString());
             cmd.Parameters.AddWithValue("@name", app.Name);
             cmd.Parameters.AddWithValue("@repo", app.RepoUrl);
             cmd.Parameters.AddWithValue("@build", (object?)app.BuildCommand ?? DBNull.Value);
             cmd.Parameters.AddWithValue("@run", (object?)app.RunCommand ?? DBNull.Value);
             cmd.Parameters.AddWithValue("@folder", (object?)app.BuildFolder ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("@cpu", (object?)app.RequiredCpuCores ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("@mem", (object?)app.RequiredMemoryMb ?? DBNull.Value);
             await cmd.ExecuteNonQueryAsync();
         }
 
@@ -194,7 +231,7 @@ namespace Orion.Core.Services
             await connection.OpenAsync();
 
             using var cmd = connection.CreateCommand();
-            cmd.CommandText = "SELECT id, name, repo_url, owner_id, build_command, run_command, build_folder, created_at FROM apps WHERE name = @name";
+            cmd.CommandText = "SELECT id, name, repo_url, owner_id, build_command, run_command, build_folder, created_at, required_cpu_cores, required_memory_mb FROM apps WHERE name = @name";
             cmd.Parameters.AddWithValue("@name", name);
             if (!string.IsNullOrEmpty(userId))
             {
@@ -213,7 +250,9 @@ namespace Orion.Core.Services
                     BuildCommand = reader.IsDBNull(4) ? null : reader.GetString(4),
                     RunCommand = reader.IsDBNull(5) ? null : reader.GetString(5),
                     BuildFolder = reader.IsDBNull(6) ? null : reader.GetString(6),
-                    CreatedAt = DateTime.Parse(reader.GetString(7))
+                    CreatedAt = DateTime.Parse(reader.GetString(7)),
+                    RequiredCpuCores = reader.IsDBNull(8) ? null : reader.GetInt32(8),
+                    RequiredMemoryMb = reader.IsDBNull(9) ? null : reader.GetInt32(9)
                 };
             }
             return null;
@@ -403,7 +442,7 @@ namespace Orion.Core.Services
             await connection.OpenAsync();
 
             using var cmd = connection.CreateCommand();
-            cmd.CommandText = "INSERT INTO instances (id, deployment_id, app_id, owner_id, container_name, port, process_id, status, created_at) VALUES (@id, @depId, @appId, @owner, @name, @port, @pid, @status, @created)";
+            cmd.CommandText = "INSERT INTO instances (id, deployment_id, app_id, owner_id, container_name, port, process_id, assigned_cpu_cores, assigned_memory_mb, status, created_at) VALUES (@id, @depId, @appId, @owner, @name, @port, @pid, @cpu, @mem, @status, @created)";
             cmd.Parameters.AddWithValue("@id", instance.Id.ToString());
             cmd.Parameters.AddWithValue("@depId", instance.DeploymentId.ToString());
             cmd.Parameters.AddWithValue("@appId", instance.AppId.ToString());
@@ -411,6 +450,8 @@ namespace Orion.Core.Services
             cmd.Parameters.AddWithValue("@name", instance.ContainerName);
             cmd.Parameters.AddWithValue("@port", instance.Port);
             cmd.Parameters.AddWithValue("@pid", (object?)instance.ProcessId ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("@cpu", (object?)instance.AssignedCpuCores ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("@mem", (object?)instance.AssignedMemoryMb ?? DBNull.Value);
             cmd.Parameters.AddWithValue("@status", instance.Status);
             cmd.Parameters.AddWithValue("@created", instance.CreatedAt.ToString("o"));
             await cmd.ExecuteNonQueryAsync();
@@ -434,7 +475,7 @@ namespace Orion.Core.Services
             await connection.OpenAsync();
 
             using var cmd = connection.CreateCommand();
-            cmd.CommandText = "SELECT id, deployment_id, app_id, container_name, port, process_id, status, created_at, owner_id FROM instances WHERE status = 'Running'";
+            cmd.CommandText = "SELECT id, deployment_id, app_id, container_name, port, process_id, assigned_cpu_cores, assigned_memory_mb, status, created_at, owner_id FROM instances WHERE status = 'Running'";
             if (!string.IsNullOrEmpty(userId))
             {
                 cmd.CommandText += " AND owner_id = @userId";
@@ -451,9 +492,9 @@ namespace Orion.Core.Services
                     ContainerName = reader.GetString(3),
                     Port = reader.GetInt32(4),
                     ProcessId = reader.IsDBNull(5) ? null : reader.GetInt32(5),
-                    Status = reader.GetString(6),
-                    CreatedAt = DateTime.Parse(reader.GetString(7)),
-                    OwnerId = reader.IsDBNull(8) ? "" : reader.GetString(8)
+                    Status = reader.GetString(8),
+                    CreatedAt = DateTime.Parse(reader.GetString(9)),
+                    OwnerId = reader.IsDBNull(10) ? "" : reader.GetString(10)
                 });
             }
             return instances;
@@ -466,7 +507,7 @@ namespace Orion.Core.Services
             await connection.OpenAsync();
 
             using var cmd = connection.CreateCommand();
-            cmd.CommandText = "SELECT id, deployment_id, app_id, container_name, port, process_id, status, created_at, owner_id FROM instances WHERE deployment_id = @id";
+            cmd.CommandText = "SELECT id, deployment_id, app_id, container_name, port, process_id, assigned_cpu_cores, assigned_memory_mb, status, created_at, owner_id FROM instances WHERE deployment_id = @id";
             cmd.Parameters.AddWithValue("@id", deploymentId.ToString());
             if (!string.IsNullOrEmpty(userId))
             {
@@ -484,9 +525,9 @@ namespace Orion.Core.Services
                     ContainerName = reader.GetString(3),
                     Port = reader.GetInt32(4),
                     ProcessId = reader.IsDBNull(5) ? null : reader.GetInt32(5),
-                    Status = reader.GetString(6),
-                    CreatedAt = DateTime.Parse(reader.GetString(7)),
-                    OwnerId = reader.IsDBNull(8) ? "" : reader.GetString(8)
+                    Status = reader.GetString(8),
+                    CreatedAt = DateTime.Parse(reader.GetString(9)),
+                    OwnerId = reader.IsDBNull(10) ? "" : reader.GetString(10)
                 });
             }
             return instances;

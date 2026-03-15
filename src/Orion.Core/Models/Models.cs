@@ -11,6 +11,8 @@ namespace Orion.Core.Models
         public string? BuildCommand { get; set; }
         public string? RunCommand { get; set; }
         public string? BuildFolder { get; set; }
+        public int? RequiredCpuCores { get; set; }
+        public int? RequiredMemoryMb { get; set; }
         public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     }
 
@@ -54,6 +56,8 @@ namespace Orion.Core.Models
         public string ContainerName { get; set; } = string.Empty;
         public int Port { get; set; }
         public int? ProcessId { get; set; }
+        public int? AssignedCpuCores { get; set; }
+        public int? AssignedMemoryMb { get; set; }
         public string Status { get; set; } = "Running";
         public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     }

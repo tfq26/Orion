@@ -59,8 +59,20 @@ namespace Orion.Core.Services
                 if (app == null)
                 {
                     _logger.LogInformation($"[MANIFEST] Creating new app: {workload.Name}");
-                    app = new App { Name = workload.Name, RepoUrl = workload.Wasm }; // Using RepoUrl to store WASM path for now
+                    app = new App 
+                    { 
+                        Name = workload.Name, 
+                        RepoUrl = workload.Wasm,
+                        RequiredCpuCores = workload.Resources.CpuCores,
+                        RequiredMemoryMb = workload.Resources.MemoryMb
+                    };
                     await _db.CreateAppAsync(app);
+                }
+                else
+                {
+                    app.RequiredCpuCores = workload.Resources.CpuCores;
+                    app.RequiredMemoryMb = workload.Resources.MemoryMb;
+                    await _db.UpdateAppAsync(app);
                 }
 
                 // Ensure there is at least one Running deployment to scale from

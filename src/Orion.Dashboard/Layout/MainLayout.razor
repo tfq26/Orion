@@ -1,146 +1,16 @@
-@inherits LayoutComponentBase
-@inject NavigationManager Navigation
-@inject Orion.Dashboard.Services.ThemeService ThemeService
-@using System.Security.Claims
+﻿@inherits LayoutComponentBase
+<div class="page">
+    <div class="sidebar">
+        <NavMenu />
+    </div>
 
-<div class="portal-container">
-    <aside class="portal-sidebar py-8 flex flex-col">
-        <div class="px-8 mb-12 flex items-center gap-3">
-            <span class="w-8 h-8 bg-accent-cyan rounded-md shadow-[0_0_15px_rgba(0,230,243,0.15)]"></span>
-            <span class="text-xl font-bold tracking-tighter">Orion</span>
+    <main>
+        <div class="top-row px-4">
+            <a href="https://learn.microsoft.com/aspnet/core/" target="_blank">About</a>
         </div>
 
-        <nav class="flex-1">
-            <NavLink href="" Match="NavLinkMatch.All" class="nav-item group" ActiveClass="active">
-                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="mr-3 opacity-50 group-hover:opacity-100 transition-opacity"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
-                Control Plane
-            </NavLink>
-            <NavLink href="workloads" class="nav-item group" ActiveClass="active">
-                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="mr-3 opacity-50 group-hover:opacity-100 transition-opacity"><path d="M12 3L2 12L12 21L22 12L12 3Z"/><path d="M12 8L22 12L12 16L2 12L12 8Z"/></svg>
-                Apps
-            </NavLink>
-            <NavLink href="infrastructure" class="nav-item group" ActiveClass="active">
-                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="mr-3 opacity-50 group-hover:opacity-100 transition-opacity"><rect x="2" y="2" width="20" height="8" rx="2" ry="2"/><rect x="2" y="14" width="20" height="8" rx="2" ry="2"/><line x1="6" y1="6" x2="6" y2="6"/><line x1="6" y1="18" x2="6" y2="18"/></svg>
-                Nodes
-            </NavLink>
-        </nav>
-    </aside>
-
-    <main class="portal-content flex flex-col">
-        <!-- Top Navigation Bar -->
-        <header class="h-16 border-b border-border bg-background flex items-center justify-between px-8 sticky top-0 z-50 shrink-0">
-            <div class="flex-1">
-                <OrionInput Placeholder="Search Nodes, Apps, or Instances..." Class="w-full">
-                    <Icon>
-                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-search"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
-                    </Icon>
-                </OrionInput>
-            </div>
-            
-            <div class="flex items-center gap-4">
-                <OrionButton Variant="OrionButton.ButtonVariant.Ghost" Class="!mt-0 !p-1.5 rounded-full text-secondary hover:text-white transition-colors">
-                    <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-bell opacity-60"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>
-                </OrionButton>
-                
-                <div class="h-6 w-[1px] bg-border mx-1"></div>
-                
-                <AuthorizeView>
-                    <Authorized>
-                        <div style="display: flex !important; flex-direction: row !important; align-items: center !important; height: 100% !important; padding-right: 0.5rem !important;">
-                            <div class="orion-dropdown group relative cursor-pointer select-none" style="display: flex !important; flex-direction: row !important; align-items: center !important; gap: 0.75rem !important;" @onclick="ToggleProfileDropdown" @onclick:stopPropagation>
-                                <div style="display: flex !important; flex-direction: column !important; align-items: flex-end !important; justify-content: center !important; line-height: 1.2 !important;">
-                                    <span class="text-[13px] font-bold text-white tracking-tight whitespace-nowrap">@context.User.Identity?.Name</span>
-                                    <span class="text-[10px] text-secondary/50 font-medium whitespace-nowrap">@context.User.FindFirst(ClaimTypes.Email)?.Value</span>
-                                </div>
-                                
-                                <div class="w-9 h-9 rounded-full border border-white/10 overflow-hidden bg-accent-cyan/10 flex items-center justify-center shadow-[0_0_20px_rgba(0,230,243,0.02)] transition-all duration-300 group-hover:border-accent-cyan/40 group-hover:shadow-[0_0_25px_rgba(0,230,243,0.15)] flex-shrink-0">
-                                    @{
-                                        var picture = context.User.FindFirst("picture")?.Value;
-                                        if (!string.IsNullOrEmpty(picture))
-                                        {
-                                            <img src="@picture" class="w-full h-full object-cover" alt="Profile" />
-                                        }
-                                        else
-                                        {
-                                            <span class="text-accent-cyan font-bold text-sm uppercase">
-                                                @(context.User.Identity?.Name?[0].ToString() ?? "U")
-                                            </span>
-                                        }
-                                    }
-                                </div>
-
-                                <!-- Click-to-toggle Dropdown for Logout -->
-                                <div class="absolute top-[calc(100%+12px)] right-[-4px] w-48 bg-surface border border-border rounded-lg shadow-2xl transition-all duration-300 origin-top-right z-[100] @(_isProfileDropdownOpen ? "opacity-100 scale-100 translate-y-0" : "opacity-0 scale-95 -translate-y-2 pointer-events-none")" @onclick:stopPropagation>
-                                    <div class="px-4 py-3 border-b border-white/5 bg-white/[0.02]">
-                                        <div class="text-[10px] font-bold text-secondary uppercase tracking-[0.1em] opacity-40 mb-1">Signed in as</div>
-                                        <div class="text-[13px] font-semibold truncate text-white">@context.User.Identity?.Name</div>
-                                        <div class="text-[11px] text-secondary truncate opacity-60">@context.User.FindFirst(ClaimTypes.Email)?.Value</div>
-                                    </div>
-                                    <div class="p-1.5 flex flex-col gap-1">
-                                        <div class="px-3 py-2 text-[10px] font-bold text-secondary uppercase tracking-widest opacity-40">Appearance</div>
-                                        <div class="grid grid-cols-4 gap-1 px-1.5 mb-2">
-                                            <button @onclick='() => SetTheme("orion")' class='w-full aspect-square rounded-md bg-[#00e6f3] border-2 @(ThemeService.CurrentTheme == "orion" ? "border-white" : "border-transparent")' title="Orion Cyan"></button>
-                                            <button @onclick='() => SetTheme("supernova")' class='w-full aspect-square rounded-md bg-[#ff8c42] border-2 @(ThemeService.CurrentTheme == "supernova" ? "border-white" : "border-transparent")' title="Supernova Orange"></button>
-                                            <button @onclick='() => SetTheme("pulsar")' class='w-full aspect-square rounded-md bg-[#bc6ff1] border-2 @(ThemeService.CurrentTheme == "pulsar" ? "border-white" : "border-transparent")' title="Pulsar Violet"></button>
-                                            <button @onclick='() => SetTheme("nova")' class='w-full aspect-square rounded-md bg-[#00d26a] border-2 @(ThemeService.CurrentTheme == "nova" ? "border-white" : "border-transparent")' title="Nova Green"></button>
-                                        </div>
-                                        <div class="h-[1px] bg-white/5 mx-2 my-1"></div>
-                                        <a href="/auth/logout" class="flex items-center gap-3 px-3 py-2 text-[12px] font-medium text-red-400 hover:text-red-300 hover:bg-red-500/10 rounded-md transition-all">
-                                            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="opacity-70"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" x2="9" y1="12" y2="12"/></svg>
-                                            Sign out
-                                        </a>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                    </Authorized>
-                    <NotAuthorized>
-                        <a href="/auth/login" class="text-sm font-semibold text-accent-cyan hover:text-accent-cyan/80 transition-colors tracking-tight">Sign In</a>
-                    </NotAuthorized>
-                </AuthorizeView>
-            </div>
-        </header>
-
-        <div class="flex-1 overflow-y-auto w-full relative">
+        <article class="content px-4">
             @Body
-        </div>
+        </article>
     </main>
 </div>
-
-@code {
-    [CascadingParameter]
-    private Task<AuthenticationState>? AuthStateTask { get; set; }
-
-    private bool _isProfileDropdownOpen = false;
-    private static MainLayout? _instance;
-
-    protected override async Task OnInitializedAsync()
-    {
-        _instance = this;
-        await ThemeService.InitializeAsync();
-    }
-
-    private void ToggleProfileDropdown()
-    {
-        _isProfileDropdownOpen = !_isProfileDropdownOpen;
-    }
-
-    private async Task SetTheme(string theme)
-    {
-        await ThemeService.SetThemeAsync(theme);
-        StateHasChanged();
-    }
-
-    [JSInvokable("CloseAllDropdowns")]
-    public static void CloseAllDropdowns()
-    {
-        if (_instance != null)
-        {
-            _instance._isProfileDropdownOpen = false;
-            _instance.StateHasChanged();
-        }
-        
-        // Also notify Home page if it's listening
-        // Note: The Home page uses its own static event for context menus
-    }
-}

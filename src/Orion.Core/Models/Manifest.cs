@@ -27,8 +27,20 @@ namespace Orion.Core.Models
         [YamlMember(Alias = "env")]
         public Dictionary<string, string> Env { get; set; } = new();
 
+        [YamlMember(Alias = "resources")]
+        public ResourceRequirement Resources { get; set; } = new();
+
         [YamlMember(Alias = "routes")]
         public List<RouteDefinition> Routes { get; set; } = new();
+    }
+
+    public class ResourceRequirement
+    {
+        [YamlMember(Alias = "cpu")]
+        public int CpuCores { get; set; } = 1;
+
+        [YamlMember(Alias = "memory")]
+        public int MemoryMb { get; set; } = 512;
     }
 
     public class RouteDefinition

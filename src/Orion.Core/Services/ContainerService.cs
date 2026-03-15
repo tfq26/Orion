@@ -15,7 +15,7 @@ namespace Orion.Core.Services
 
     public interface IContainerService
     {
-        Task<InstanceResult> StartContainerAsync(string imageTag, string containerName, IDictionary<string, string>? envVars = null);
+        Task<InstanceResult> StartContainerAsync(string imageTag, string containerName, IDictionary<string, string>? envVars = null, int? cpuCores = null, int? memoryMb = null);
         Task<bool> StopContainerAsync(string containerName);
         Task<bool> IsContainerRunningAsync(string containerName);
     }
@@ -31,7 +31,7 @@ namespace Orion.Core.Services
             _logService = logService;
         }
 
-        public async Task<InstanceResult> StartContainerAsync(string imageTag, string containerName, IDictionary<string, string>? envVars = null)
+        public async Task<InstanceResult> StartContainerAsync(string imageTag, string containerName, IDictionary<string, string>? envVars = null, int? cpuCores = null, int? memoryMb = null)
         {
             int hostPort = GetAvailablePort();
             _logger.LogInformation($"Starting container {containerName} from image {imageTag} on port {hostPort}");
@@ -45,8 +45,12 @@ namespace Orion.Core.Services
                 }
             }
 
-            // docker run -d --name {containerName} -p {hostPort}:80 {envArgs} {imageTag}
-            var arguments = $"run -d --name {containerName} -p {hostPort}:80{envArgs} {imageTag}";
+            // docker run -d --name {containerName} --cpus={cpuCores} --memory={memoryMb}m -p {hostPort}:80 {envArgs} {imageTag}
+            var resourceArgs = "";
+            if (cpuCores.HasValue) resourceArgs += $" --cpus={cpuCores}";
+            if (memoryMb.HasValue) resourceArgs += $" --memory={memoryMb}m";
+
+            var arguments = $"run -d --name {containerName} {resourceArgs} -p {hostPort}:80{envArgs} {imageTag}";
             
             var success = await ExecuteDockerCommandAsync(arguments);
             

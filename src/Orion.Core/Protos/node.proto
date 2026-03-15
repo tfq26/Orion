@@ -1,0 +1,76 @@
+syntax = "proto3";
+
+option csharp_namespace = "Orion.Core.Grpc";
+
+package orion;
+
+service NodeService {
+  rpc Join (JoinRequest) returns (JoinResponse);
+  rpc Heartbeat (HeartbeatRequest) returns (HeartbeatResponse);
+  rpc StreamTelemetry (stream TelemetryData) returns (TelemetrySummary);
+  rpc TransferState (StateRequest) returns (StateResponse);
+  rpc StartWorkload (WorkloadRequest) returns (WorkloadResponse);
+  rpc StopWorkload (StopWorkloadRequest) returns (WorkloadResponse);
+}
+
+message WorkloadRequest {
+  string app_id = 1;
+  string deployment_id = 2;
+  string image_tag = 3;
+  string container_name = 4;
+  map<string, string> env_vars = 5;
+  int32 cpu_cores = 6;
+  int32 memory_mb = 7;
+}
+
+message StopWorkloadRequest {
+  string container_name = 1;
+}
+
+message WorkloadResponse {
+  bool success = 1;
+  string message = 2;
+  int32 port = 3;
+  int32 process_id = 4;
+}
+
+message JoinRequest {
+  string node_id = 1;
+  string node_name = 2;
+  string ip_address = 3;
+  int32 cpu_cores = 4;
+  int64 memory_mb = 5;
+}
+
+message JoinResponse {
+  bool success = 1;
+  string message = 2;
+}
+
+message HeartbeatRequest {
+  string node_id = 1;
+}
+
+message HeartbeatResponse {
+  bool success = 1;
+}
+
+message TelemetryData {
+  string app_id = 1;
+  double cpu_usage = 2;
+  double memory_mb = 3;
+  int64 timestamp = 4;
+}
+
+message TelemetrySummary {
+  int32 processed_count = 1;
+}
+
+message StateRequest {
+  string key = 1;
+}
+
+message StateResponse {
+  bytes data = 1;
+  string content_type = 2;
+}

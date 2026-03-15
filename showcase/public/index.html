@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Orion Galaxy | v1.0.0 Showcase</title>
+    <link rel="stylesheet" href="style.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Outfit:wght@400;600;800&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <div class="logo">
+                <div class="pulsar"></div>
+                ORION GALAXY
+            </div>
+            <div class="status-badge status-online" id="cluster-health">
+                Cluster: Healthy
+            </div>
+        </header>
+
+        <div class="grid">
+            <!-- Node Pulse: Real-time Telemetry -->
+            <div class="card">
+                <div class="card-title">
+                    <span>🛰️</span> Node Pulse
+                </div>
+                <div class="node-list" id="node-list">
+                    <!-- Nodes injected here -->
+                    <div class="node-item">
+                        <span>Master Node</span>
+                        <span class="status-badge status-online">Online</span>
+                    </div>
+                    <div class="node-item">
+                        <span>Worker-Alpha</span>
+                        <span class="status-badge status-online">Online</span>
+                    </div>
+                </div>
+                <div style="margin-top: 1.5rem;">
+                    <button class="button button-outline" style="width: 100%;" onclick="refreshNodes()">Refresh Topology</button>
+                </div>
+            </div>
+
+            <!-- Blob Voyager: Distributed S3 -->
+            <div class="card">
+                <div class="card-title">
+                    <span>📦</span> Blob Voyager (S3)
+                </div>
+                <div class="stats-grid">
+                    <div class="stat-box">
+                        <div class="stat-value" id="file-count">0</div>
+                        <div class="stat-label">Objects</div>
+                    </div>
+                    <div class="stat-box">
+                        <div class="stat-value" id="storage-usage">0MB</div>
+                        <div class="stat-label">Total Size</div>
+                    </div>
+                </div>
+                <div class="file-list" id="file-list">
+                    <!-- Files injected here -->
+                </div>
+                <div style="margin-top: 1rem; display: flex; gap: 0.5rem;">
+                    <button class="button" style="flex: 1;" onclick="uploadTestFile()">Upload Test</button>
+                    <button class="button button-outline" onclick="listObjects()">List</button>
+                </div>
+            </div>
+
+            <!-- Scaling & Slicing -->
+            <div class="card">
+                <div class="card-title">
+                    <span>⚡</span> Smart Scaling
+                </div>
+                <div class="stat-box" style="margin-bottom: 1rem;">
+                    <div class="stat-label">Showcase App Replicas</div>
+                    <div class="stat-value" id="replica-count" style="font-size: 2.5rem; margin: 0.5rem 0;">1</div>
+                    <input type="range" min="1" max="10" value="1" style="width: 100%;" id="replica-range" oninput="updateReplicaCount(this.value)">
+                </div>
+                <button class="button" style="width: 100%;" onclick="scaleApp()">Apply Scaling</button>
+            </div>
+
+            <!-- Anti-Gravity: Self Healing -->
+            <div class="card">
+                <div class="card-title">
+                    <span>🛡️</span> Anti-Gravity Engine
+                </div>
+                <p style="font-size: 0.875rem; color: var(--text-muted); margin-bottom: 1rem;">
+                    Simulate a node failure and watch the cluster autonomously heal.
+                </p>
+                <div class="node-item" style="margin-bottom: 1rem; border: 1px dashed var(--accent);">
+                    <span>Worker-Beta (Test Node)</span>
+                    <span class="status-badge status-online">Target</span>
+                </div>
+                <button class="button button-danger" style="width: 100%;" onclick="triggerChaos()">Destroy Node (Simulate Failure)</button>
+                <div id="healing-status" style="margin-top: 1rem; font-size: 0.75rem; text-align: center; display: none;">
+                    Healing in progress... Workloads moving to Master.
+                </div>
+            </div>
+        </div>
+
+        <footer style="margin-top: 4rem; text-align: center; color: var(--text-muted); font-size: 0.75rem;">
+            Orion Personal Cloud v1.0.0 &bull; Distributed State &bull; High-Performance Mesh Networking
+        </footer>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>

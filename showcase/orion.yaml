@@ -1,0 +1,22 @@
+name: Orion Galaxy
+version: 1.0.0
+description: High-performance cluster showcase and management dashboard.
+author: Orion Cloud Team
+
+resources:
+  cpu: 1
+  memory: 512MB
+
+network:
+  ingress:
+    path: /galaxy
+    port: 80
+
+storage:
+  type: hybrid
+  buckets:
+    - default
+
+build:
+  engine: static
+  output: public
