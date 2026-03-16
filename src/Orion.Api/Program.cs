@@ -184,23 +184,33 @@ app.UseAuthorization();
 app.MapReverseProxy();
 app.MapGrpcService<Orion.Api.Services.NodeGrpcService>();
 
-// Auth API
-app.MapGet("/auth/login", (IConfiguration config) =>
+string GetRedirectUri(HttpContext context, IConfiguration config)
+{
+    var source = context.Request.Query["source"].ToString();
+    if (string.Equals(source, "desktop", StringComparison.OrdinalIgnoreCase))
+    {
+        return config["WorkOS:DesktopRedirectUri"] ?? "orion://auth/callback";
+    }
+
+    return config["WorkOS:WebRedirectUri"] ?? "http://localhost:3000/auth/callback";
+}
+
+IResult BuildLoginRedirect(IConfiguration config, string redirectUri)
 {
     var clientId = config["WorkOS:ClientId"] ?? "client_placeholder";
-    var redirectUri = "http://localhost:3000/auth/callback";
-    
-    // AuthKit Universal Login: Manually constructing URL to bypass SDK version limits
     var url = $"https://api.workos.com/sso/authorize?client_id={clientId}&redirect_uri={Uri.EscapeDataString(redirectUri)}&response_type=code&provider=authkit";
-    
     return Results.Redirect(url);
-});
+}
 
-app.MapGet("/auth/callback", async (string code, IHttpClientFactory httpClientFactory, IConfiguration config, HttpContext context) =>
+async Task<IResult> ExchangeWorkOsCodeAsync(
+    string code,
+    string redirectUri,
+    IHttpClientFactory httpClientFactory,
+    IConfiguration config,
+    HttpContext context)
 {
     var clientId = config["WorkOS:ClientId"] ?? "client_placeholder";
     var apiKey = config["WorkOS:ApiKey"] ?? "sk_test_placeholder";
-    var redirectUri = "http://localhost:3000/auth/callback";
 
     Console.WriteLine($"[AUTH] Exchanging code for token... Code: {code.Substring(0, Math.Min(5, code.Length))}...");
 
@@ -209,15 +219,16 @@ app.MapGet("/auth/callback", async (string code, IHttpClientFactory httpClientFa
     {
         client_id = clientId,
         client_secret = apiKey,
-        code = code,
-        grant_type = "authorization_code"
+        code,
+        grant_type = "authorization_code",
+        redirect_uri = redirectUri
     });
 
     if (!response.IsSuccessStatusCode)
     {
         var error = await response.Content.ReadAsStringAsync();
         Console.WriteLine($"[AUTH] Error: User Management authentication failed. Status: {response.StatusCode}, Error: {error}");
-        return Results.Unauthorized();
+        return Results.Json(new { success = false, error }, statusCode: StatusCodes.Status401Unauthorized);
     }
 
     var result = await response.Content.ReadFromJsonAsync<System.Text.Json.Nodes.JsonNode>();
@@ -226,7 +237,7 @@ app.MapGet("/auth/callback", async (string code, IHttpClientFactory httpClientFa
     if (userNode == null)
     {
         Console.WriteLine("[AUTH] Error: User data not found in response.");
-        return Results.Unauthorized();
+        return Results.Json(new { success = false, error = "User data not found in response." }, statusCode: StatusCodes.Status401Unauthorized);
     }
 
     var userId = userNode["id"]?.ToString() ?? "";
@@ -251,7 +262,42 @@ app.MapGet("/auth/callback", async (string code, IHttpClientFactory httpClientFa
 
     await context.SignInAsync(Microsoft.AspNetCore.Authentication.Cookies.CookieAuthenticationDefaults.AuthenticationScheme, principal);
 
+    return Results.Ok(new { success = true });
+}
+
+// Auth API
+app.MapGet("/auth/login", (HttpContext context, IConfiguration config) =>
+{
+    var redirectUri = GetRedirectUri(context, config);
+    return BuildLoginRedirect(config, redirectUri);
+});
+
+app.MapGet("/auth/login-url", (HttpContext context, IConfiguration config) =>
+{
+    var redirectUri = GetRedirectUri(context, config);
+    var clientId = config["WorkOS:ClientId"] ?? "client_placeholder";
+    var url = $"https://api.workos.com/sso/authorize?client_id={clientId}&redirect_uri={Uri.EscapeDataString(redirectUri)}&response_type=code&provider=authkit";
+    return Results.Ok(new { url, redirectUri });
+});
+
+app.MapGet("/auth/callback", async (string code, IHttpClientFactory httpClientFactory, IConfiguration config, HttpContext context) =>
+{
+    var redirectUri = GetRedirectUri(context, config);
+    await ExchangeWorkOsCodeAsync(code, redirectUri, httpClientFactory, config, context);
+    if (string.Equals(context.Request.Query["source"], "desktop", StringComparison.OrdinalIgnoreCase))
+    {
+        return Results.Redirect("http://localhost:3000/");
+    }
+
     return Results.Redirect("http://localhost:3000/");
+});
+
+app.MapPost("/auth/exchange", async (AuthExchangeRequest request, IHttpClientFactory httpClientFactory, IConfiguration config, HttpContext context) =>
+{
+    var redirectUri = string.Equals(request.Source, "desktop", StringComparison.OrdinalIgnoreCase)
+        ? config["WorkOS:DesktopRedirectUri"] ?? "orion://auth/callback"
+        : config["WorkOS:WebRedirectUri"] ?? "http://localhost:3000/auth/callback";
+    return await ExchangeWorkOsCodeAsync(request.Code, redirectUri, httpClientFactory, config, context);
 });
 
 app.MapGet("/auth/logout", async (HttpContext context) =>

@@ -11,6 +11,9 @@
     "tauri:build": "npx tauri build"
   },
   "dependencies": {
+    "@tauri-apps/api": "^2.8.0",
+    "@tauri-apps/plugin-deep-link": "^2.4.3",
+    "@tauri-apps/plugin-opener": "^2.4.1",
     "@solidjs/router": "^0.15.4",
     "solid-js": "^1.8.11"
   },

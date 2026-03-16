@@ -10,6 +10,7 @@
     "frontendDist": "../dist"
   },
   "app": {
+    "withGlobalTauri": false,
     "windows": [
       {
         "title": "Orion",
@@ -23,6 +24,15 @@
     ],
     "security": {
       "csp": null
+    }
+  },
+  "plugins": {
+    "deep-link": {
+      "desktop": {
+        "schemes": [
+          "orion"
+        ]
+      }
     }
   },
   "bundle": {
