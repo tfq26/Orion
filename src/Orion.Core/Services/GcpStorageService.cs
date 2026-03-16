@@ -71,7 +71,7 @@ namespace Orion.Core.Services
                 return new BlobMetadata
                 {
                     Path = path,
-                    Size = (long)(obj.Size ?? 0),
+                    SizeBytes = (long)(obj.Size ?? 0),
                     LastModified = obj.UpdatedDateTimeOffset?.UtcDateTime ?? DateTime.UtcNow,
                     ContentType = obj.ContentType,
                     ETag = obj.ETag

@@ -12,10 +12,12 @@ namespace Orion.Core.Services
     {
         Task<bool> BuildAsync(Guid appId, string appName, string repoUrl, Guid jobId, string ownerId, string? buildCommand = null, string? runCommand = null, string? buildFolder = null);
         Task<List<string>> GetRepoDirectoriesAsync(string repoUrl);
+        Task<string?> GetLatestRevisionAsync(string repoUrl);
     }
 
     public class BuildService : IBuildService
     {
+        private const string LocalUploadScheme = "orion-upload://";
         private readonly ILogger<BuildService> _logger;
         private readonly ILogService _logService;
         private readonly IStorageService _storage;
@@ -49,13 +51,24 @@ namespace Orion.Core.Services
                 
                 Directory.CreateDirectory(buildDir);
 
-                // 1. Clone Repo
-                await LogAsync($"Cloning {repoUrl} into {buildDir}");
-                var buildResult = await ExecuteProcessAsync("git", $"clone {repoUrl} .", buildDir, LogAsync);
+                bool buildResult;
+
+                if (IsLocalUploadSource(repoUrl))
+                {
+                    var sourceDir = ResolveLocalUploadDirectory(repoUrl);
+                    await LogAsync($"[SOURCE] Using local uploaded source from {sourceDir}");
+                    buildResult = await CopyDirectoryAsync(sourceDir, buildDir, LogAsync);
+                }
+                else
+                {
+                    // 1. Clone Repo
+                    await LogAsync($"Cloning {repoUrl} into {buildDir}");
+                    buildResult = await ExecuteProcessAsync("git", $"clone {repoUrl} .", buildDir, LogAsync);
+                }
                 
                 if (!buildResult)
                 {
-                    await LogAsync("[BUILD] Clone failed", "Error");
+                    await LogAsync(IsLocalUploadSource(repoUrl) ? "[BUILD] Local source preparation failed" : "[BUILD] Clone failed", "Error");
                     return false;
                 }
 
@@ -126,6 +139,18 @@ namespace Orion.Core.Services
 
         public async Task<List<string>> GetRepoDirectoriesAsync(string repoUrl)
         {
+            if (IsLocalUploadSource(repoUrl))
+            {
+                var sourceDir = ResolveLocalUploadDirectory(repoUrl);
+                if (!Directory.Exists(sourceDir)) return new List<string>();
+
+                return Directory.GetDirectories(sourceDir, "*", SearchOption.AllDirectories)
+                    .Select(d => Path.GetRelativePath(sourceDir, d))
+                    .Where(d => !string.IsNullOrWhiteSpace(d))
+                    .OrderBy(d => d)
+                    .ToList();
+            }
+
             var tempDir = Path.Combine(Path.GetTempPath(), "orion-explore", Guid.NewGuid().ToString());
             if (Directory.Exists(tempDir)) Directory.Delete(tempDir, true);
             Directory.CreateDirectory(tempDir);
@@ -173,6 +198,57 @@ namespace Orion.Core.Services
             }
         }
 
+        public async Task<string?> GetLatestRevisionAsync(string repoUrl)
+        {
+            if (IsLocalUploadSource(repoUrl))
+            {
+                return null;
+            }
+
+            try
+            {
+                var processInfo = new ProcessStartInfo
+                {
+                    FileName = "git",
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    UseShellExecute = false,
+                    CreateNoWindow = true
+                };
+                processInfo.ArgumentList.Add("ls-remote");
+                processInfo.ArgumentList.Add(repoUrl);
+                processInfo.ArgumentList.Add("HEAD");
+
+                using var process = Process.Start(processInfo);
+                if (process == null)
+                {
+                    return null;
+                }
+
+                var output = await process.StandardOutput.ReadToEndAsync();
+                await process.WaitForExitAsync();
+
+                if (process.ExitCode != 0)
+                {
+                    var error = await process.StandardError.ReadToEndAsync();
+                    _logger.LogWarning("Failed to resolve latest revision for {RepoUrl}: {Error}", repoUrl, error);
+                    return null;
+                }
+
+                var revision = output
+                    .Split('\n', StringSplitOptions.RemoveEmptyEntries)
+                    .Select(line => line.Split('\t', StringSplitOptions.RemoveEmptyEntries).FirstOrDefault())
+                    .FirstOrDefault(hash => !string.IsNullOrWhiteSpace(hash));
+
+                return revision;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Unable to inspect remote revision for {RepoUrl}", repoUrl);
+                return null;
+            }
+        }
+
         private string ComputeHash(string input)
         {
             using var sha = System.Security.Cryptography.SHA256.Create();
@@ -206,6 +282,46 @@ namespace Orion.Core.Services
             await process.WaitForExitAsync();
 
             return process.ExitCode == 0;
+        }
+
+        private static bool IsLocalUploadSource(string repoUrl)
+        {
+            return repoUrl.StartsWith(LocalUploadScheme, StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static string ResolveLocalUploadDirectory(string repoUrl)
+        {
+            var uploadId = repoUrl.Replace(LocalUploadScheme, "", StringComparison.OrdinalIgnoreCase);
+            return Path.Combine(Directory.GetCurrentDirectory(), "uploaded_sources", uploadId);
+        }
+
+        private static async Task<bool> CopyDirectoryAsync(string sourceDir, string destinationDir, Func<string, string, Task> logAsync)
+        {
+            if (!Directory.Exists(sourceDir))
+            {
+                await logAsync($"[SOURCE] Uploaded source directory not found: {sourceDir}", "Error");
+                return false;
+            }
+
+            foreach (var directory in Directory.GetDirectories(sourceDir, "*", SearchOption.AllDirectories))
+            {
+                Directory.CreateDirectory(directory.Replace(sourceDir, destinationDir));
+            }
+
+            foreach (var file in Directory.GetFiles(sourceDir, "*", SearchOption.AllDirectories))
+            {
+                var targetPath = file.Replace(sourceDir, destinationDir);
+                var targetDirectory = Path.GetDirectoryName(targetPath);
+                if (!string.IsNullOrEmpty(targetDirectory))
+                {
+                    Directory.CreateDirectory(targetDirectory);
+                }
+
+                File.Copy(file, targetPath, overwrite: true);
+            }
+
+            await logAsync("[SOURCE] Local files copied into build workspace.", "Info");
+            return true;
         }
     }
 }

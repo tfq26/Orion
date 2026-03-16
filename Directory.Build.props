@@ -1,0 +1,7 @@
+<Project>
+  <PropertyGroup Condition="'$(MSBuildProjectName)' == 'Orion.Core'">
+    <BaseIntermediateOutputPath>$(MSBuildThisFileDirectory)build_tmp/Orion.Core/obj/</BaseIntermediateOutputPath>
+    <MSBuildProjectExtensionsPath>$(BaseIntermediateOutputPath)</MSBuildProjectExtensionsPath>
+    <BaseOutputPath>$(MSBuildThisFileDirectory)build_tmp/Orion.Core/bin/</BaseOutputPath>
+  </PropertyGroup>
+</Project>

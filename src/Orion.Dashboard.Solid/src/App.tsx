@@ -4,6 +4,7 @@ import Sidebar from './components/Sidebar';
 import Home from './pages/Home';
 import Apps from './pages/Apps';
 import Infrastructure from './pages/Infrastructure';
+import Automations from './pages/Automations';
 import AppDetails from './pages/AppDetails';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { ThemeProvider, useTheme } from './contexts/ThemeContext';
@@ -36,7 +37,7 @@ const AppContent: Component = () => {
         fallback={
           <div class="flex flex-col items-center justify-center min-h-screen bg-gray-50 dark:bg-black p-12 text-center transition-colors duration-300">
             <div class="w-16 h-16 bg-blue-600 rounded-2xl shadow-xl shadow-blue-200 dark:shadow-blue-900/20 mb-8 flex items-center justify-center">
-                <div class="w-6 h-6 bg-white rounded-md"></div>
+              <div class="w-6 h-6 bg-white rounded-md"></div>
             </div>
             <h1 class="text-4xl font-black text-gray-900 dark:text-white tracking-tighter mb-4">Orion</h1>
             <p class="text-gray-500 dark:text-gray-400 font-bold text-xs max-w-md mb-12 uppercase tracking-[0.3em] opacity-60 italic">Hybrid Cloud Orchestration</p>
@@ -54,7 +55,7 @@ const AppContent: Component = () => {
           <Route path="/apps" component={Apps} />
           <Route path="/apps/:id" component={AppDetails} />
           <Route path="/nodes" component={Infrastructure} />
-          <Route path="/workflows" component={() => <div class="p-20 text-center font-bold text-gray-400 dark:text-gray-500 uppercase tracking-widest text-xs opacity-50">Automation Engine Synchronizing...</div>} />
+          <Route path="/workflows" component={Automations} />
         </Router>
       </Show>
     </Show>

@@ -5,7 +5,10 @@ const net = require('net');
 
 const PORT = 5031;
 const DASHBOARD_PORT = 3000;
-const TMP_DIR = path.join(__dirname, 'local_tmp');
+const TMP_DIR = path.join(__dirname, 'orion_tmp');
+const args = process.argv.slice(2);
+const useDesktopShell = args.includes('--desktop');
+const SHUTDOWN_TIMEOUT_MS = 5000;
 
 function cleanupPort(port) {
     console.log(`[BOOTSTRAP] Cleaning up port ${port}...`);
@@ -77,6 +80,53 @@ function ensureDirectories() {
     }
 }
 
+function delay(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function isChildRunning(child) {
+    return Boolean(child && child.pid && child.exitCode === null && !child.killed);
+}
+
+function signalChild(child, signal = 'SIGTERM') {
+    if (!isChildRunning(child)) {
+        return;
+    }
+
+    try {
+        if (process.platform === 'win32') {
+            const winSignal = signal === 'SIGKILL' ? '/F' : '';
+            execSync(`taskkill ${winSignal} /T /PID ${child.pid}`.trim(), { stdio: 'ignore' });
+            return;
+        }
+
+        if (child.pid) {
+            process.kill(child.pid, signal);
+        }
+    } catch (e) {
+        // Ignore shutdown races where the child already exited.
+    }
+}
+
+async function terminateChild(child, name) {
+    if (!isChildRunning(child)) {
+        return;
+    }
+
+    console.log(`[BOOTSTRAP] Stopping ${name}...`);
+    signalChild(child, 'SIGTERM');
+
+    const start = Date.now();
+    while (isChildRunning(child) && Date.now() - start < SHUTDOWN_TIMEOUT_MS) {
+        await delay(100);
+    }
+
+    if (isChildRunning(child)) {
+        console.log(`[BOOTSTRAP] Force stopping ${name}...`);
+        signalChild(child, 'SIGKILL');
+    }
+}
+
 async function startSystem() {
     ensureDirectories();
     cleanupPort(5000);
@@ -113,32 +163,56 @@ async function startSystem() {
     await waitForPort(PORT);
     console.log('[BOOTSTRAP] Backend is ready.');
 
-    console.log('[BOOTSTRAP] Starting SolidJS Dashboard...');
-    console.log(`[BOOTSTRAP] Dashboard will be available at: http://localhost:${DASHBOARD_PORT}`);
+    const dashboardCommand = useDesktopShell ? 'tauri:dev' : 'dev';
+    const dashboardLabel = useDesktopShell ? 'Orion Desktop' : 'SolidJS Dashboard';
 
-    const dashboard = spawn('npm', ['run', 'dev'], {
+    console.log(`[BOOTSTRAP] Starting ${dashboardLabel}...`);
+    if (useDesktopShell) {
+        console.log(`[BOOTSTRAP] Desktop shell will use the dashboard dev server at: http://localhost:${DASHBOARD_PORT}`);
+    } else {
+        console.log(`[BOOTSTRAP] Dashboard will be available at: http://localhost:${DASHBOARD_PORT}`);
+    }
+
+    const dashboard = spawn('npm', ['run', dashboardCommand], {
         cwd: path.join(__dirname, 'src', 'Orion.Dashboard.Solid'),
         env: commonEnv,
         stdio: 'inherit',
         shell: true
     });
 
+    let shuttingDown = false;
+
+    const shutdown = async (reason, exitCode = 0) => {
+        if (shuttingDown) {
+            return;
+        }
+
+        shuttingDown = true;
+        console.log(`[BOOTSTRAP] Shutting down${reason ? ` (${reason})` : ''}...`);
+        await Promise.all([
+            terminateChild(api, 'Orion.Api'),
+            terminateChild(dashboard, dashboardLabel)
+        ]);
+        process.exit(exitCode);
+    };
+
     const handleExit = (code, name) => {
+        if (shuttingDown) {
+            return;
+        }
+
         console.log(`[BOOTSTRAP] ${name} exited with code ${code}`);
-        api.kill();
-        dashboard.kill();
-        process.exit(code);
+        shutdown(`${name} exited`, code ?? 0);
     };
 
     api.on('close', (code) => handleExit(code, 'Orion.Api'));
-    dashboard.on('close', (code) => handleExit(code, 'Dashboard'));
+    dashboard.on('close', (code) => handleExit(code, dashboardLabel));
 
-    // Handle process termination
     process.on('SIGINT', () => {
-        console.log('[BOOTSTRAP] Shutting down...');
-        api.kill();
-        dashboard.kill();
-        process.exit();
+        shutdown('SIGINT', 0);
+    });
+    process.on('SIGTERM', () => {
+        shutdown('SIGTERM', 0);
     });
 }
 
@@ -146,4 +220,3 @@ startSystem().catch(err => {
     console.error('[BOOTSTRAP] Fatal error:', err);
     process.exit(1);
 });
-

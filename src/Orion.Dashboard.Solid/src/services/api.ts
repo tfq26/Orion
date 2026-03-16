@@ -2,6 +2,9 @@ export interface AppSummary {
   id: string;
   name: string;
   status: string;
+  latestBuildStatus: string;
+  latestBuildAt?: string;
+  stability: string;
   cpuUsage: number;
   memoryUsageMb: number;
   activeReplicas: number;
@@ -12,6 +15,24 @@ export interface DashboardSummary {
   connectedPeers: number;
   pilotStatus: string;
   apps: AppSummary[];
+}
+
+export interface NodeTelemetrySample {
+  timestamp: string;
+  cpuUsage: number;
+  memoryUsagePercent: number;
+  memoryUsageGb: number;
+  storageUsagePercent: number;
+  storageUsageGb: number;
+  networkTrafficMbps: number;
+}
+
+export interface NodeTelemetrySnapshot {
+  nodeName: string;
+  architecture: string;
+  samples: NodeTelemetrySample[];
+  hourlySamples: NodeTelemetrySample[];
+  dailySamples: NodeTelemetrySample[];
 }
 
 export interface App {
@@ -26,12 +47,67 @@ export interface App {
   url?: string;
 }
 
+export interface Deployment {
+  id: string;
+  appId: string;
+  ownerId: string;
+  status: 'Pending' | 'Building' | 'Deploying' | 'Running' | 'Failed' | 'Paused';
+  imageTag?: string;
+  sourceVersion?: string;
+  port?: number;
+  createdAt: string;
+}
+
+export interface DeploymentAssessmentReport {
+  appId: string;
+  appName: string;
+  stability: string;
+  recommendedAction: string;
+  currentReplicas: number;
+  recommendedReplicas: number;
+  cpuUsage: number;
+  memoryUsageMb: number;
+  allocatedCpuCores: number;
+  allocatedMemoryMb: number;
+  review: string;
+  findings: string[];
+}
+
+export interface RefreshResult {
+  startedBuild: boolean;
+  message: string;
+  latestRevision?: string;
+  currentRevision?: string;
+  deployment?: Deployment;
+}
+
+export interface AppLogEntry {
+  id: string;
+  appId?: string;
+  deploymentId?: string;
+  ownerId: string;
+  message: string;
+  level: string;
+  timestamp: string;
+}
+
+export interface LocalUploadEntry {
+  file: File;
+  path: string;
+}
+
 const API_BASE = '/dashboard'; // This should be configured for the backend URL
 
 export const api = {
   async getSummary(): Promise<DashboardSummary> {
     const res = await fetch(`${API_BASE}/summary`);
     if (!res.ok) throw new Error('Failed to fetch summary');
+    return res.json();
+  },
+
+  async getNodeTelemetry(): Promise<NodeTelemetrySnapshot> {
+    const res = await fetch(`${API_BASE}/node-telemetry`);
+    if (!res.ok) throw new Error('Failed to fetch node telemetry');
     return res.json();
   },
 
@@ -65,6 +141,34 @@ export const api = {
     };
   },
 
+  async createUploadedApp(name: string, files: LocalUploadEntry[], buildCommand?: string, runCommand?: string, buildFolder?: string): Promise<App> {
+    const formData = new FormData();
+    formData.append('name', name);
+    formData.append('buildCommand', buildCommand ?? '');
+    formData.append('runCommand', runCommand ?? '');
+    formData.append('buildFolder', buildFolder || 'dist');
+
+    files.forEach((entry) => {
+      formData.append('files', entry.file);
+      formData.append('paths', entry.path);
+    });
+
+    const res = await fetch('/apps/upload', {
+      method: 'POST',
+      body: formData
+    });
+    if (!res.ok) throw new Error(await res.text() || 'Failed to upload local app');
+
+    const app = await res.json();
+    return {
+      ...app,
+      url: `https://${name.toLowerCase().replace(/\s+/g, '-')}.orion.run`,
+      buildCommand: buildCommand ?? undefined,
+      runCommand: runCommand ?? undefined,
+      buildFolder
+    };
+  },
+
   async exploreRepo(repoUrl: string): Promise<string[]> {
     const res = await fetch('/apps/explore', {
       method: 'POST',
@@ -85,9 +189,44 @@ export const api = {
     return res.json();
   },
 
-  async triggerBuild(appId: string): Promise<void> {
+  async deleteApp(id: string): Promise<void> {
+    const res = await fetch(`/apps/${id}`, {
+      method: 'DELETE'
+    });
+    if (!res.ok) {
+      const message = await res.text();
+      throw new Error(message || 'Failed to delete app');
+    }
+  },
+
+  async triggerBuild(appId: string): Promise<Deployment> {
     const res = await fetch(`/apps/${appId}/build`, { method: 'POST' });
     if (!res.ok) throw new Error('Failed to trigger build');
+    return res.json();
+  },
+
+  async pauseDeployment(appId: string): Promise<{ paused: boolean; message: string; stoppedReplicas: number }> {
+    const res = await fetch(`/apps/${appId}/pause`, { method: 'POST' });
+    if (!res.ok) throw new Error('Failed to pause deployment');
+    return res.json();
+  },
+
+  async refreshDeployment(appId: string): Promise<RefreshResult> {
+    const res = await fetch(`/apps/${appId}/refresh`, { method: 'POST' });
+    if (!res.ok) throw new Error('Failed to refresh deployment');
+    return res.json();
+  },
+
+  async assessDeployment(appId: string): Promise<DeploymentAssessmentReport> {
+    const res = await fetch(`/apps/${appId}/assess`);
+    if (!res.ok) throw new Error('Failed to assess deployment');
+    return res.json();
+  },
+
+  async getDeployments(appId: string): Promise<Deployment[]> {
+    const res = await fetch(`/apps/${appId}/deployments`);
+    if (!res.ok) throw new Error('Failed to fetch deployments');
+    return res.json();
   },
 
   async getAppSecrets(id: string): Promise<Record<string, string>> {
@@ -105,7 +244,7 @@ export const api = {
     if (!res.ok) throw new Error('Failed to update secrets');
   },
 
-  streamAppLogs(id: string, onMessage: (log: any) => void): () => void {
+  streamAppLogs(id: string, onMessage: (log: AppLogEntry) => void): () => void {
     const eventSource = new EventSource(`/apps/${id}/logs`);
     eventSource.onmessage = (event) => {
       try {

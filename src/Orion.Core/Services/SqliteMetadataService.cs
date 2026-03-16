@@ -45,6 +45,7 @@ namespace Orion.Core.Services
                     owner_id TEXT,
                     status TEXT,
                     image_tag TEXT,
+                    source_version TEXT,
                     port INTEGER,
                     created_at TEXT
                 );
@@ -152,6 +153,28 @@ namespace Orion.Core.Services
                     await alterCmd.ExecuteNonQueryAsync();
                 }
             }
+
+            using (var checkCmd = connection.CreateCommand())
+            {
+                checkCmd.CommandText = "PRAGMA table_info(deployments);";
+                using var reader = await checkCmd.ExecuteReaderAsync();
+                var hasSourceVersion = false;
+                while (await reader.ReadAsync())
+                {
+                    if (reader.GetString(1) == "source_version")
+                    {
+                        hasSourceVersion = true;
+                    }
+                }
+                reader.Close();
+
+                if (!hasSourceVersion)
+                {
+                    using var alterCmd = connection.CreateCommand();
+                    alterCmd.CommandText = "ALTER TABLE deployments ADD COLUMN source_version TEXT;";
+                    await alterCmd.ExecuteNonQueryAsync();
+                }
+            }
         }
 
         public async Task<IEnumerable<App>> GetAppsAsync(string? userId = null)
@@ -193,6 +216,7 @@ namespace Orion.Core.Services
             using var connection = new SqliteConnection(_connectionString);
             await connection.OpenAsync();
 
+            using var cmd = connection.CreateCommand();
             cmd.CommandText = "INSERT INTO apps (id, name, repo_url, owner_id, build_command, run_command, build_folder, created_at, required_cpu_cores, required_memory_mb) VALUES (@id, @name, @repo, @owner, @build, @run, @folder, @created, @cpu, @mem)";
             cmd.Parameters.AddWithValue("@id", app.Id.ToString());
             cmd.Parameters.AddWithValue("@name", app.Name);
@@ -223,6 +247,61 @@ namespace Orion.Core.Services
             cmd.Parameters.AddWithValue("@cpu", (object?)app.RequiredCpuCores ?? DBNull.Value);
             cmd.Parameters.AddWithValue("@mem", (object?)app.RequiredMemoryMb ?? DBNull.Value);
             await cmd.ExecuteNonQueryAsync();
+        }
+
+        public async Task DeleteAppAsync(Guid appId)
+        {
+            using var connection = new SqliteConnection(_connectionString);
+            await connection.OpenAsync();
+
+            using var transaction = connection.BeginTransaction();
+            try
+            {
+                var appIdStr = appId.ToString();
+
+                // 1. Delete instances associated with the app
+                using (var cmd = connection.CreateCommand())
+                {
+                    cmd.Transaction = transaction;
+                    cmd.CommandText = "DELETE FROM instances WHERE app_id = @appId";
+                    cmd.Parameters.AddWithValue("@appId", appIdStr);
+                    await cmd.ExecuteNonQueryAsync();
+                }
+
+                // 2. Delete secrets associated with the app
+                using (var cmd = connection.CreateCommand())
+                {
+                    cmd.Transaction = transaction;
+                    cmd.CommandText = "DELETE FROM secrets WHERE app_id = @appId";
+                    cmd.Parameters.AddWithValue("@appId", appIdStr);
+                    await cmd.ExecuteNonQueryAsync();
+                }
+
+                // 3. Delete deployments associated with the app
+                using (var cmd = connection.CreateCommand())
+                {
+                    cmd.Transaction = transaction;
+                    cmd.CommandText = "DELETE FROM deployments WHERE app_id = @appId";
+                    cmd.Parameters.AddWithValue("@appId", appIdStr);
+                    await cmd.ExecuteNonQueryAsync();
+                }
+
+                // 4. Delete the app itself
+                using (var cmd = connection.CreateCommand())
+                {
+                    cmd.Transaction = transaction;
+                    cmd.CommandText = "DELETE FROM apps WHERE id = @id";
+                    cmd.Parameters.AddWithValue("@id", appIdStr);
+                    await cmd.ExecuteNonQueryAsync();
+                }
+
+                await transaction.CommitAsync();
+            }
+            catch
+            {
+                await transaction.RollbackAsync();
+                throw;
+            }
         }
 
         public async Task<App?> GetAppByNameAsync(string name, string? userId = null)
@@ -265,7 +344,7 @@ namespace Orion.Core.Services
             await connection.OpenAsync();
 
             using var cmd = connection.CreateCommand();
-            cmd.CommandText = "SELECT id, app_id, status, image_tag, port, created_at, owner_id FROM deployments WHERE app_id = @appId";
+            cmd.CommandText = "SELECT id, app_id, status, image_tag, source_version, port, created_at, owner_id FROM deployments WHERE app_id = @appId";
             cmd.Parameters.AddWithValue("@appId", appId.ToString());
             if (!string.IsNullOrEmpty(userId))
             {
@@ -281,9 +360,10 @@ namespace Orion.Core.Services
                     AppId = Guid.Parse(reader.GetString(1)),
                     Status = Enum.Parse<DeploymentStatus>(reader.GetString(2)),
                     ImageTag = reader.IsDBNull(3) ? null : reader.GetString(3),
-                    Port = reader.IsDBNull(4) ? null : reader.GetInt32(4),
-                    CreatedAt = DateTime.Parse(reader.GetString(5)),
-                    OwnerId = reader.IsDBNull(6) ? "" : reader.GetString(6)
+                    SourceVersion = reader.IsDBNull(4) ? null : reader.GetString(4),
+                    Port = reader.IsDBNull(5) ? null : reader.GetInt32(5),
+                    CreatedAt = DateTime.Parse(reader.GetString(6)),
+                    OwnerId = reader.IsDBNull(7) ? "" : reader.GetString(7)
                 });
             }
             return deployments;
@@ -295,12 +375,13 @@ namespace Orion.Core.Services
             await connection.OpenAsync();
 
             using var cmd = connection.CreateCommand();
-            cmd.CommandText = "INSERT INTO deployments (id, app_id, owner_id, status, image_tag, port, created_at) VALUES (@id, @appId, @owner, @status, @tag, @port, @created)";
+            cmd.CommandText = "INSERT INTO deployments (id, app_id, owner_id, status, image_tag, source_version, port, created_at) VALUES (@id, @appId, @owner, @status, @tag, @sourceVersion, @port, @created)";
             cmd.Parameters.AddWithValue("@id", deployment.Id.ToString());
             cmd.Parameters.AddWithValue("@appId", deployment.AppId.ToString());
             cmd.Parameters.AddWithValue("@owner", deployment.OwnerId);
             cmd.Parameters.AddWithValue("@status", deployment.Status.ToString());
             cmd.Parameters.AddWithValue("@tag", (object?)deployment.ImageTag ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("@sourceVersion", (object?)deployment.SourceVersion ?? DBNull.Value);
             cmd.Parameters.AddWithValue("@port", (object?)deployment.Port ?? DBNull.Value);
             cmd.Parameters.AddWithValue("@created", deployment.CreatedAt.ToString("o"));
             await cmd.ExecuteNonQueryAsync();
@@ -312,7 +393,7 @@ namespace Orion.Core.Services
             await connection.OpenAsync();
 
             using var cmd = connection.CreateCommand();
-            cmd.CommandText = "UPDATE deployments SET status = @status, image_tag = @tag, port = @port WHERE id = @id";
+            cmd.CommandText = "UPDATE deployments SET status = @status, image_tag = COALESCE(@tag, image_tag), port = COALESCE(@port, port) WHERE id = @id";
             cmd.Parameters.AddWithValue("@status", status.ToString());
             cmd.Parameters.AddWithValue("@tag", (object?)imageTag ?? DBNull.Value);
             cmd.Parameters.AddWithValue("@port", (object?)port ?? DBNull.Value);
@@ -326,7 +407,7 @@ namespace Orion.Core.Services
             await connection.OpenAsync();
 
             using var cmd = connection.CreateCommand();
-            cmd.CommandText = "SELECT id, app_id, status, image_tag, port, created_at, owner_id FROM deployments WHERE id = @id";
+            cmd.CommandText = "SELECT id, app_id, status, image_tag, source_version, port, created_at, owner_id FROM deployments WHERE id = @id";
             cmd.Parameters.AddWithValue("@id", deploymentId.ToString());
             if (!string.IsNullOrEmpty(userId))
             {
@@ -342,9 +423,10 @@ namespace Orion.Core.Services
                     AppId = Guid.Parse(reader.GetString(1)),
                     Status = Enum.Parse<DeploymentStatus>(reader.GetString(2)),
                     ImageTag = reader.IsDBNull(3) ? null : reader.GetString(3),
-                    Port = reader.IsDBNull(4) ? null : reader.GetInt32(4),
-                    CreatedAt = DateTime.Parse(reader.GetString(5)),
-                    OwnerId = reader.IsDBNull(6) ? "" : reader.GetString(6)
+                    SourceVersion = reader.IsDBNull(4) ? null : reader.GetString(4),
+                    Port = reader.IsDBNull(5) ? null : reader.GetInt32(5),
+                    CreatedAt = DateTime.Parse(reader.GetString(6)),
+                    OwnerId = reader.IsDBNull(7) ? "" : reader.GetString(7)
                 };
             }
             return null;
@@ -357,7 +439,7 @@ namespace Orion.Core.Services
             await connection.OpenAsync();
 
             using var cmd = connection.CreateCommand();
-            cmd.CommandText = "SELECT id, app_id, status, image_tag, port, created_at, owner_id FROM deployments WHERE status = 'Running' AND port IS NOT NULL";
+            cmd.CommandText = "SELECT id, app_id, status, image_tag, source_version, port, created_at, owner_id FROM deployments WHERE status = 'Running' AND port IS NOT NULL";
             if (!string.IsNullOrEmpty(userId))
             {
                 cmd.CommandText += " AND owner_id = @userId";
@@ -372,9 +454,10 @@ namespace Orion.Core.Services
                     AppId = Guid.Parse(reader.GetString(1)),
                     Status = Enum.Parse<DeploymentStatus>(reader.GetString(2)),
                     ImageTag = reader.IsDBNull(3) ? null : reader.GetString(3),
-                    Port = reader.IsDBNull(4) ? null : reader.GetInt32(4),
-                    CreatedAt = DateTime.Parse(reader.GetString(5)),
-                    OwnerId = reader.IsDBNull(6) ? "" : reader.GetString(6)
+                    SourceVersion = reader.IsDBNull(4) ? null : reader.GetString(4),
+                    Port = reader.IsDBNull(5) ? null : reader.GetInt32(5),
+                    CreatedAt = DateTime.Parse(reader.GetString(6)),
+                    OwnerId = reader.IsDBNull(7) ? "" : reader.GetString(7)
                 });
             }
             return deployments;

@@ -73,7 +73,7 @@ namespace Orion.Core.Services
             return new BlobMetadata
             {
                 Path = path,
-                Size = properties.Value.ContentLength,
+                SizeBytes = properties.Value.ContentLength,
                 LastModified = properties.Value.LastModified.UtcDateTime,
                 ContentType = properties.Value.ContentType,
                 ETag = properties.Value.ETag.ToString()

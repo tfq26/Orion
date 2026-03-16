@@ -12,7 +12,7 @@ namespace Orion.Core.Services
     {
         private readonly ILogger<ResourceMonitorService> _logger;
         private readonly IMetadataService _db;
-        private readonly PerformanceCounter _cpuCounter;
+        private readonly PerformanceCounter? _cpuCounter;
 
         public ResourceMonitorService(ILogger<ResourceMonitorService> logger, IMetadataService db)
         {
@@ -21,7 +21,10 @@ namespace Orion.Core.Services
             
             try 
             {
-                _cpuCounter = new PerformanceCounter("Processor", "% Processor Time", "_Total");
+                if (OperatingSystem.IsWindows())
+                {
+                    _cpuCounter = new PerformanceCounter("Processor", "% Processor Time", "_Total");
+                }
             }
             catch 
             {
@@ -43,7 +46,11 @@ namespace Orion.Core.Services
                     totalAssignedMem += inst.AssignedMemoryMb ?? 0;
                 }
 
-                float systemCpu = _cpuCounter?.NextValue() ?? 0;
+                float systemCpu = 0;
+                if (OperatingSystem.IsWindows() && _cpuCounter != null)
+                {
+                    systemCpu = _cpuCounter.NextValue();
+                }
                 
                 _logger.LogInformation($"[RESOURCES] System Load: {systemCpu:F1}% | Cluster Reservation: {totalAssignedCores} Cores, {totalAssignedMem} MB RAM");
 

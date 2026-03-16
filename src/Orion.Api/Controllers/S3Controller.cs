@@ -58,7 +58,7 @@ namespace Orion.Api.Controllers
                     new XElement(ns + "Key", path),
                     new XElement(ns + "LastModified", meta.LastModified.ToString("yyyy-MM-ddTHH:mm:ss.fffZ")),
                     new XElement(ns + "ETag", meta.ETag),
-                    new XElement(ns + "Size", meta.Size),
+                    new XElement(ns + "Size", meta.SizeBytes),
                     new XElement(ns + "StorageClass", "STANDARD")
                 ));
             }
@@ -125,7 +125,7 @@ namespace Orion.Api.Controllers
             var meta = await _storage.GetBlobMetadataAsync(key);
             if (meta == null) return NotFound();
 
-            Response.Headers.Append("Content-Length", meta.Size.ToString());
+            Response.Headers.Append("Content-Length", meta.SizeBytes.ToString());
             Response.Headers.Append("Last-Modified", meta.LastModified.ToString("R"));
             Response.Headers.Append("ETag", meta.ETag);
             

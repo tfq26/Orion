@@ -67,9 +67,9 @@ export const MetricsGraph: Component<MetricsGraphProps> = (props) => {
         />
       </svg>
 
-      <div class="absolute bottom-2 right-4 text-[10px] font-black text-white italic">
+      <div class="absolute bottom-2 right-4 text-[10px] font-black text-white">
         {Math.round(props.data[props.data.length - 1]?.[props.type] || 0)}
-        <span class="text-[8px] ml-1 text-gray-500 not-italic">{props.type === 'cpu' ? '%' : 'MB'}</span>
+        <span class="text-[8px] ml-1 text-gray-500">{props.type === 'cpu' ? '%' : 'MB'}</span>
       </div>
     </div>
   );

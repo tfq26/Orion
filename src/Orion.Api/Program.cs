@@ -28,6 +28,7 @@ builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 builder.Services.AddHttpClient();
 builder.Services.AddControllers();
+builder.Services.AddGrpc();
 builder.Services.AddCors(options =>
 {
     options.AddDefaultPolicy(policy =>
@@ -89,19 +90,26 @@ builder.Services.AddSingleton<ISecurityService>(sp =>
 
 builder.Services.AddSingleton<ISecretService, SecretService>();
 builder.Services.AddSingleton<IMetricsService, MetricsService>();
+builder.Services.AddSingleton<IResourceAdvisorService, ResourceAdvisorService>();
+builder.Services.AddSingleton<INodeTelemetryHistoryStore>(new NodeTelemetryHistoryStore("orion_telemetry.db"));
+builder.Services.AddSingleton<INodeTelemetryService, NodeTelemetryService>();
 builder.Services.AddSingleton<IDracoTelemetryExporter, DracoTelemetryExporter>();
+builder.Services.AddSingleton<ISchedulerService, SchedulerService>();
+builder.Services.AddSingleton<INodeServiceClient, NodeServiceClient>();
 builder.Services.AddSingleton<IScaleService, ScaleService>();
 builder.Services.AddSingleton<IContainerService, WasmtimeService>(); // Next-Gen WASM Edge Runtime
 builder.Services.AddSingleton<IJobDispatcher>(new JobDispatcher());
 builder.Services.AddTransient<IBuildService, BuildService>();
 builder.Services.AddSingleton<IManifestService, ManifestService>();
 builder.Services.AddSingleton<IMeshService, MeshService>();
+builder.Services.AddSingleton<IClusterIngressService, ClusterIngressService>();
 builder.Services.AddSingleton<IPilotService, OrionPilotService>();
 builder.Services.AddHostedService<JobWorker>();
 builder.Services.AddHostedService<AutoscaleWorker>();
 builder.Services.AddHostedService<TelemetryExporterWorker>();
 builder.Services.AddHostedService<ManifestWorker>();
 builder.Services.AddHostedService<PilotWorker>();
+builder.Services.AddHostedService(sp => (NodeTelemetryService)sp.GetRequiredService<INodeTelemetryService>());
 
 // Architecture-aware initialization log
 var arch = System.Runtime.InteropServices.RuntimeInformation.ProcessArchitecture;
@@ -140,8 +148,10 @@ using (var scope = app.Services.CreateScope())
     var metadata = scope.ServiceProvider.GetRequiredService<IMetadataService>();
     var telemetry = scope.ServiceProvider.GetRequiredService<ITelemetryService>();
     var meshService = scope.ServiceProvider.GetRequiredService<IMeshService>();
+    var nodeTelemetryHistory = scope.ServiceProvider.GetRequiredService<INodeTelemetryHistoryStore>();
     await metadata.InitializeAsync();
     await telemetry.InitializeAsync();
+    await nodeTelemetryHistory.InitializeAsync();
     await meshService.InitializeAsync();
 }
 
@@ -156,10 +166,10 @@ _ = Task.Run(async () =>
         try
         {
             using var scope = app.Services.CreateScope();
-            var db = scope.ServiceProvider.GetRequiredService<IMetadataService>();
-            var apps = await db.GetAppsAsync();
-            var instances = await db.GetActiveInstancesAsync();
-            proxyConfigProvider.Update(apps, instances);
+            var ingress = scope.ServiceProvider.GetRequiredService<IClusterIngressService>();
+            var routes = await ingress.GetRoutesAsync();
+            var clusters = await ingress.GetClustersAsync();
+            proxyConfigProvider.Update(routes, clusters);
         }
         catch { /* Log error */ }
         await Task.Delay(TimeSpan.FromSeconds(5));
@@ -172,6 +182,7 @@ app.UseAuthentication();
 app.UseAuthorization();
 
 app.MapReverseProxy();
+app.MapGrpcService<Orion.Api.Services.NodeGrpcService>();
 
 // Auth API
 app.MapGet("/auth/login", (IConfiguration config) =>
@@ -268,6 +279,52 @@ app.MapGet("/auth/user", (System.Security.Claims.ClaimsPrincipal user) =>
 // Helper to get UserId
 string? GetUserId(System.Security.Claims.ClaimsPrincipal user) => user.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
 
+async Task<Deployment> QueueBuildAsync(
+    App appModel,
+    string ownerId,
+    IMetadataService db,
+    IJobDispatcher dispatcher,
+    ILogService logService,
+    IBuildService buildService,
+    string triggerMessage)
+{
+    var revision = await buildService.GetLatestRevisionAsync(appModel.RepoUrl);
+
+    var deployment = new Deployment
+    {
+        AppId = appModel.Id,
+        OwnerId = ownerId,
+        Status = DeploymentStatus.Pending,
+        SourceVersion = revision
+    };
+
+    await db.CreateDeploymentAsync(deployment);
+    await logService.LogAsync(appModel.Id, deployment.Id, ownerId, triggerMessage);
+
+    var buildJob = new BuildJob
+    {
+        Id = deployment.Id,
+        AppId = appModel.Id,
+        AppName = appModel.Name,
+        RepoUrl = appModel.RepoUrl,
+        BuildCommand = appModel.BuildCommand,
+        RunCommand = appModel.RunCommand,
+        BuildFolder = appModel.BuildFolder,
+        OwnerId = ownerId
+    };
+
+    await dispatcher.EnqueueAsync(buildJob);
+    await logService.LogAsync(
+        appModel.Id,
+        deployment.Id,
+        ownerId,
+        revision is null
+            ? $"[QUEUE] Build job queued for {appModel.Name}."
+            : $"[QUEUE] Build job queued for {appModel.Name} at revision {revision[..Math.Min(8, revision.Length)]}.");
+
+    return deployment;
+}
+
 // API Endpoints
 app.MapGet("/apps", async (System.Security.Claims.ClaimsPrincipal user, IMetadataService db) =>
 {
@@ -330,6 +387,123 @@ app.MapPost("/apps", async (App app, System.Security.Claims.ClaimsPrincipal user
 .WithOpenApi()
 .RequireAuthorization();
 
+app.MapPost("/apps/upload", async (HttpRequest request, System.Security.Claims.ClaimsPrincipal user, IMetadataService db) =>
+{
+    if (!request.HasFormContentType)
+    {
+        return Results.BadRequest("Multipart form data is required.");
+    }
+
+    var form = await request.ReadFormAsync();
+    var appName = form["name"].ToString();
+    var buildCommand = form["buildCommand"].ToString();
+    var runCommand = form["runCommand"].ToString();
+    var buildFolder = form["buildFolder"].ToString();
+    var files = form.Files;
+    var paths = form["paths"];
+
+    if (string.IsNullOrWhiteSpace(appName))
+    {
+        return Results.BadRequest("Application name is required.");
+    }
+
+    if (files.Count == 0)
+    {
+        return Results.BadRequest("At least one source file is required.");
+    }
+
+    var app = new App
+    {
+        Id = Guid.NewGuid(),
+        Name = appName,
+        OwnerId = GetUserId(user) ?? "",
+        BuildCommand = string.IsNullOrWhiteSpace(buildCommand) ? null : buildCommand,
+        RunCommand = string.IsNullOrWhiteSpace(runCommand) ? null : runCommand,
+        BuildFolder = string.IsNullOrWhiteSpace(buildFolder) ? "dist" : buildFolder
+    };
+    app.RepoUrl = $"orion-upload://{app.Id}";
+
+    var uploadRoot = Path.Combine(Directory.GetCurrentDirectory(), "uploaded_sources", app.Id.ToString());
+    if (Directory.Exists(uploadRoot))
+    {
+        Directory.Delete(uploadRoot, true);
+    }
+    Directory.CreateDirectory(uploadRoot);
+
+    for (var i = 0; i < files.Count; i++)
+    {
+        var file = files[i];
+        var relativePath = paths.Count > i && !string.IsNullOrWhiteSpace(paths[i])
+            ? paths[i].ToString()
+            : file.FileName;
+        relativePath = relativePath.Replace('\\', Path.DirectorySeparatorChar).Replace('/', Path.DirectorySeparatorChar);
+
+        var destinationPath = Path.Combine(uploadRoot, relativePath);
+        var destinationDirectory = Path.GetDirectoryName(destinationPath);
+        if (!string.IsNullOrEmpty(destinationDirectory))
+        {
+            Directory.CreateDirectory(destinationDirectory);
+        }
+
+        using var stream = File.Create(destinationPath);
+        await file.CopyToAsync(stream);
+    }
+
+    await db.CreateAppAsync(app);
+    return Results.Created($"/apps/{app.Id}", app);
+})
+.DisableAntiforgery()
+.WithName("CreateUploadedApp")
+.WithOpenApi()
+.RequireAuthorization();
+
+app.MapDelete("/apps/{id}", async (Guid id, System.Security.Claims.ClaimsPrincipal user, IMetadataService db, ITelemetryService telemetry, IContainerService containerService, ILogger<Program> logger) =>
+{
+    var userId = GetUserId(user);
+    var apps = await db.GetAppsAsync(userId);
+    var appModel = apps.FirstOrDefault(a => a.Id == id);
+    if (appModel == null) return Results.NotFound();
+
+    try
+    {
+        // Stop any active containers before deletion, but do not fail the delete if a stale instance cannot be stopped.
+        var activeInstances = (await db.GetActiveInstancesAsync(userId)).Where(instance => instance.AppId == id).ToList();
+        foreach (var instance in activeInstances)
+        {
+            try
+            {
+                await containerService.StopContainerAsync(instance.ContainerName);
+            }
+            catch (Exception ex)
+            {
+                logger.LogWarning(ex, "Failed to stop instance {ContainerName} while deleting app {AppId}", instance.ContainerName, id);
+            }
+        }
+
+        if (appModel.RepoUrl.StartsWith("orion-upload://", StringComparison.OrdinalIgnoreCase))
+        {
+            var uploadId = appModel.RepoUrl.Replace("orion-upload://", "", StringComparison.OrdinalIgnoreCase);
+            var uploadRoot = Path.Combine(Directory.GetCurrentDirectory(), "uploaded_sources", uploadId);
+            if (Directory.Exists(uploadRoot))
+            {
+                Directory.Delete(uploadRoot, true);
+            }
+        }
+
+        await telemetry.DeleteAppTelemetryAsync(id, userId);
+        await db.DeleteAppAsync(id);
+        return Results.NoContent();
+    }
+    catch (Exception ex)
+    {
+        logger.LogError(ex, "Failed to delete app {AppId}", id);
+        return Results.Problem($"Failed to delete application: {ex.Message}");
+    }
+})
+.WithName("DeleteApp")
+.WithOpenApi()
+.RequireAuthorization();
+
 app.MapGet("/apps/{id}/deployments", async (Guid id, System.Security.Claims.ClaimsPrincipal user, IMetadataService db) =>
 {
     var userId = GetUserId(user);
@@ -350,35 +524,21 @@ app.MapPost("/deployments", async (Deployment deployment, System.Security.Claims
 .WithOpenApi()
 .RequireAuthorization();
 
-app.MapPost("/apps/{id}/build", async (Guid id, System.Security.Claims.ClaimsPrincipal user, IMetadataService db, IJobDispatcher dispatcher) =>
+app.MapPost("/apps/{id}/build", async (Guid id, System.Security.Claims.ClaimsPrincipal user, IMetadataService db, IJobDispatcher dispatcher, ILogService logService, IBuildService buildService) =>
 {
     var userId = GetUserId(user);
     var apps = await db.GetAppsAsync(userId);
     var app = apps.FirstOrDefault(a => a.Id == id);
     if (app == null) return Results.NotFound();
 
-    var deployment = new Deployment
-    {
-        AppId = app.Id,
-        OwnerId = userId ?? "",
-        Status = DeploymentStatus.Pending
-    };
-
-    await db.CreateDeploymentAsync(deployment);
-
-    var buildJob = new BuildJob
-    {
-        Id = deployment.Id,
-        AppId = app.Id,
-        AppName = app.Name,
-        RepoUrl = app.RepoUrl,
-        BuildCommand = app.BuildCommand,
-        RunCommand = app.RunCommand,
-        BuildFolder = app.BuildFolder,
-        OwnerId = userId ?? ""
-    };
-
-    await dispatcher.EnqueueAsync(buildJob);
+    var deployment = await QueueBuildAsync(
+        app,
+        userId ?? "",
+        db,
+        dispatcher,
+        logService,
+        buildService,
+        $"[QUEUE] Redeploy requested for {app.Name}.");
 
     return Results.Accepted($"/apps/{id}/deployments", deployment);
 })
@@ -386,7 +546,100 @@ app.MapPost("/apps/{id}/build", async (Guid id, System.Security.Claims.ClaimsPri
 .WithOpenApi()
 .RequireAuthorization();
 
-app.MapGet("/apps/{id}/logs", async (HttpContext context, Guid id, System.Security.Claims.ClaimsPrincipal user, ILogService logService, CancellationToken ct) =>
+app.MapPost("/apps/{id}/pause", async (Guid id, System.Security.Claims.ClaimsPrincipal user, IMetadataService db, IContainerService containerService, ILogService logService) =>
+{
+    var userId = GetUserId(user);
+    var apps = await db.GetAppsAsync(userId);
+    var app = apps.FirstOrDefault(a => a.Id == id);
+    if (app == null) return Results.NotFound();
+
+    var activeInstances = (await db.GetActiveInstancesAsync(userId)).Where(instance => instance.AppId == id).ToList();
+    foreach (var instance in activeInstances)
+    {
+        await containerService.StopContainerAsync(instance.ContainerName);
+        await db.DeleteInstanceAsync(instance.Id);
+    }
+
+    var deployments = await db.GetDeploymentsAsync(id, userId);
+    foreach (var deployment in deployments.Where(d => d.Status != DeploymentStatus.Failed && d.Status != DeploymentStatus.Paused))
+    {
+        await db.UpdateDeploymentStatusAsync(deployment.Id, DeploymentStatus.Paused);
+    }
+
+    var deploymentId = deployments.OrderByDescending(d => d.CreatedAt).FirstOrDefault()?.Id ?? Guid.NewGuid();
+    await logService.LogAsync(app.Id, deploymentId, userId ?? "", $"[CONTROL] Paused deployment for {app.Name}.");
+
+    return Results.Ok(new
+    {
+        paused = true,
+        message = $"{app.Name} has been paused.",
+        stoppedReplicas = activeInstances.Count
+    });
+})
+.WithName("PauseDeployment")
+.WithOpenApi()
+.RequireAuthorization();
+
+app.MapPost("/apps/{id}/refresh", async (Guid id, System.Security.Claims.ClaimsPrincipal user, IMetadataService db, IJobDispatcher dispatcher, ILogService logService, IBuildService buildService) =>
+{
+    var userId = GetUserId(user);
+    var apps = await db.GetAppsAsync(userId);
+    var app = apps.FirstOrDefault(a => a.Id == id);
+    if (app == null) return Results.NotFound();
+
+    var deployments = (await db.GetDeploymentsAsync(id, userId)).OrderByDescending(d => d.CreatedAt).ToList();
+    var latestDeployment = deployments.FirstOrDefault();
+    var latestRevision = await buildService.GetLatestRevisionAsync(app.RepoUrl);
+
+    if (!string.IsNullOrWhiteSpace(latestRevision) && latestDeployment?.SourceVersion == latestRevision)
+    {
+        await logService.LogAsync(app.Id, latestDeployment.Id, userId ?? "", $"[REFRESH] No new revision detected for {app.Name}. Refresh skipped.");
+        return Results.Ok(new
+        {
+            startedBuild = false,
+            message = "No new repository changes were detected.",
+            latestRevision,
+            currentRevision = latestDeployment.SourceVersion
+        });
+    }
+
+    var deployment = await QueueBuildAsync(
+        app,
+        userId ?? "",
+        db,
+        dispatcher,
+        logService,
+        buildService,
+        $"[REFRESH] Repository refresh requested for {app.Name}.");
+
+    return Results.Ok(new
+    {
+        startedBuild = true,
+        message = "New repository changes detected. Build queued.",
+        latestRevision,
+        currentRevision = latestDeployment?.SourceVersion,
+        deployment
+    });
+})
+.WithName("RefreshDeployment")
+.WithOpenApi()
+.RequireAuthorization();
+
+app.MapGet("/apps/{id}/assess", async (Guid id, System.Security.Claims.ClaimsPrincipal user, IMetadataService db, IResourceAdvisorService advisor) =>
+{
+    var userId = GetUserId(user);
+    var apps = await db.GetAppsAsync(userId);
+    var app = apps.FirstOrDefault(a => a.Id == id);
+    if (app == null) return Results.NotFound();
+
+    var report = await advisor.AssessAsync(app, userId);
+    return Results.Ok(report);
+})
+.WithName("AssessDeployment")
+.WithOpenApi()
+.RequireAuthorization();
+
+app.MapGet("/apps/{id}/logs", async (HttpContext context, Guid id, System.Security.Claims.ClaimsPrincipal user, ILogService logService, ITelemetryService telemetryService, CancellationToken ct) =>
 {
     var userId = GetUserId(user);
     context.Response.ContentType = "text/event-stream";
@@ -396,7 +649,7 @@ app.MapGet("/apps/{id}/logs", async (HttpContext context, Guid id, System.Securi
     // TODO: In production, verify app ownership before starting stream.
 
     // 1. Send recent logs first
-    var recentLogs = logService.GetRecentLogs(id); 
+    var recentLogs = await telemetryService.GetLogsAsync(id, userId: userId);
     foreach (var log in recentLogs)
     {
         var json = System.Text.Json.JsonSerializer.Serialize(log, Orion.Core.Serialization.OrionJsonContext.Default.LogEntry);
@@ -497,7 +750,7 @@ app.MapGet("/apps/{id}/telemetry", async (Guid id, System.Security.Claims.Claims
 .WithOpenApi()
 .RequireAuthorization();
 
-app.MapGet("/dashboard/summary", async (System.Security.Claims.ClaimsPrincipal user, IMetadataService db, IMetricsService metricsService, IServiceProvider sp) =>
+app.MapGet("/dashboard/summary", async (System.Security.Claims.ClaimsPrincipal user, IMetadataService db, IResourceAdvisorService advisor, IPilotService pilot) =>
 {
     var userId = GetUserId(user);
     var apps = (await db.GetAppsAsync(userId)).Where(a => !a.Name.Equals("ScaleApp", StringComparison.OrdinalIgnoreCase));
@@ -510,28 +763,44 @@ app.MapGet("/dashboard/summary", async (System.Security.Claims.ClaimsPrincipal u
         TotalInstances = allInstances.Count(),
         ConnectedPeers = peers.Count(p => p.Status == "Online"),
         ControlPlaneArch = System.Runtime.InteropServices.RuntimeInformation.ProcessArchitecture.ToString(),
-        PilotStatus = (await sp.GetRequiredService<IPilotService>().AnalyzeHealthAsync()).PilotStatus
+        PilotStatus = (await pilot.AnalyzeHealthAsync()).PilotStatus
     };
 
     foreach (var app in apps)
     {
-        var metrics = await metricsService.GetMetricsAsync(app.Id);
-        var appInstances = allInstances.Where(i => i.AppId == app.Id);
+        var appInstances = allInstances.Where(i => i.AppId == app.Id).ToList();
+        var deployments = (await db.GetDeploymentsAsync(app.Id, userId)).OrderByDescending(d => d.CreatedAt).ToList();
+        var latestDeployment = deployments.FirstOrDefault();
+        var assessment = await advisor.AssessAsync(app, userId);
+        var operationalStatus = appInstances.Any()
+            ? "Running"
+            : latestDeployment?.Status.ToString() ?? "Idle";
         
         summary.Apps.Add(new AppSummary
         {
             Id = app.Id,
             Name = app.Name,
-            Status = appInstances.Any() ? "Running" : "Idle",
+            Status = operationalStatus,
+            LatestBuildStatus = latestDeployment?.Status.ToString() ?? "Unknown",
+            LatestBuildAt = latestDeployment?.CreatedAt,
+            Stability = assessment.Stability,
             ActiveReplicas = appInstances.Count(),
-            CpuUsage = metrics.CpuUsage,
-            MemoryUsageMb = metrics.MemoryUsageMb
+            CpuUsage = assessment.CpuUsage,
+            MemoryUsageMb = assessment.MemoryUsageMb
         });
     }
 
     return Results.Ok(summary);
 })
 .WithName("GetDashboardSummary")
+.WithOpenApi()
+.RequireAuthorization();
+
+app.MapGet("/dashboard/node-telemetry", async (INodeTelemetryService nodeTelemetry) =>
+{
+    return Results.Ok(await nodeTelemetry.GetSnapshotAsync());
+})
+.WithName("GetNodeTelemetry")
 .WithOpenApi()
 .RequireAuthorization();
 

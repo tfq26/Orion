@@ -11,6 +11,7 @@ namespace Orion.Core.Services
         Task<IEnumerable<App>> GetAppsAsync(string? userId = null);
         Task CreateAppAsync(App app);
         Task UpdateAppAsync(App app);
+        Task DeleteAppAsync(Guid appId);
         Task<App?> GetAppByNameAsync(string name, string? userId = null);
         Task<IEnumerable<Deployment>> GetDeploymentsAsync(Guid appId, string? userId = null);
         Task CreateDeploymentAsync(Deployment deployment);
@@ -36,5 +37,6 @@ namespace Orion.Core.Services
         Task<IEnumerable<LogEntry>> GetLogsAsync(Guid appId, Guid? deploymentId = null, string? userId = null);
         Task CreateMetricAsync(Guid appId, string? userId, double cpu, int memory);
         Task<IEnumerable<dynamic>> GetMetricsAsync(Guid appId, string? userId = null, int limit = 100);
+        Task DeleteAppTelemetryAsync(Guid appId, string? userId = null);
     }
 }

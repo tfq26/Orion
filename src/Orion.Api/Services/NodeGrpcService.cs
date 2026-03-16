@@ -1,18 +1,28 @@
 using Grpc.Core;
 using Orion.Core.Grpc;
+using Orion.Core.Services;
+using Orion.Core.Models;
 using Microsoft.Extensions.Logging;
 
 namespace Orion.Api.Services
 {
-    public class NodeGrpcService : NodeService.NodeServiceBase
+    public class NodeGrpcService : Orion.Core.Grpc.NodeService.NodeServiceBase
     {
         private readonly ILogger<NodeGrpcService> _logger;
         private readonly ITelemetryService _telemetry;
+        private readonly IMetadataService _db;
+        private readonly IContainerService _containerService;
 
-        public NodeGrpcService(ILogger<NodeGrpcService> logger, ITelemetryService telemetry)
+        public NodeGrpcService(
+            ILogger<NodeGrpcService> logger, 
+            ITelemetryService telemetry,
+            IMetadataService db,
+            IContainerService containerService)
         {
             _logger = logger;
             _telemetry = telemetry;
+            _db = db;
+            _containerService = containerService;
         }
 
         public override async Task<JoinResponse> Join(JoinRequest request, ServerCallContext context)
@@ -56,7 +66,7 @@ namespace Orion.Api.Services
 
             if (result.Success)
             {
-                return new WorkloadResponse { Success = true, Message = "Started", Port = result.Port, ProcessId = result.ProcessId };
+                return new WorkloadResponse { Success = true, Message = "Started", Port = result.Port, ProcessId = result.ProcessId ?? 0 };
             }
             return new WorkloadResponse { Success = false, Message = "Failed to start container" };
         }

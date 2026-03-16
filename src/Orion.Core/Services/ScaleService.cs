@@ -4,6 +4,7 @@ using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
 using Orion.Core.Models;
+using Orion.Core.Grpc;
 
 namespace Orion.Core.Services
 {
@@ -84,7 +85,7 @@ namespace Orion.Core.Services
                             app.RequiredCpuCores, 
                             app.RequiredMemoryMb);
                         port = result.Port;
-                        pid = result.ProcessId;
+                        pid = result.ProcessId ?? 0;
                     }
                     else // Remote Worker
                     {

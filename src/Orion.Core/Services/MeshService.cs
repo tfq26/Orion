@@ -4,6 +4,7 @@ using System.Net.Http;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
 using Orion.Core.Models;
+using Orion.Core.Grpc;
 
 namespace Orion.Core.Services
 {
@@ -19,7 +20,9 @@ namespace Orion.Core.Services
         private readonly ILogger<MeshService> _logger;
         private readonly IMetadataService _db;
         private readonly INodeServiceClient _nodeClient;
-        private string _masterUrl;
+        private string _masterUrl = string.Empty;
+        private readonly string _headscaleUrl;
+        private readonly string _apiKey;
         private Guid _nodeId = Guid.NewGuid();
 
         public MeshService(ILogger<MeshService> logger, IMetadataService db, INodeServiceClient nodeClient)

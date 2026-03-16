@@ -14,16 +14,32 @@
     <PackageReference Include="Microsoft.Extensions.Logging" Version="9.0.2" />
     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="9.0.2" />
     <PackageReference Include="Npgsql" Version="9.0.2" />
-    <PackageReference Include="EdgeDB.Net.Client" Version="4.0.1" />
+    <PackageReference Include="EdgeDB.Net.Driver" Version="1.4.0" />
     <PackageReference Include="Dapper" Version="2.1.35" />
     <PackageReference Include="AWSSDK.S3" Version="3.7.404.7" />
     <PackageReference Include="Azure.Storage.Blobs" Version="12.23.0" />
     <PackageReference Include="Google.Cloud.Storage.V1" Version="4.10.0" />
     <PackageReference Include="Grpc.Net.Client" Version="2.67.0" />
     <PackageReference Include="Grpc.AspNetCore" Version="2.67.0" />
+    <PackageReference Include="Grpc.Tools" Version="2.67.0">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
     <PackageReference Include="MessagePack" Version="3.1.1" />
     <PackageReference Include="Wasmtime" Version="34.0.2" />
     <PackageReference Include="YamlDotNet" Version="16.3.0" />
+    <PackageReference Include="Yarp.ReverseProxy" Version="2.3.0" />
+    <PackageReference Include="System.Diagnostics.PerformanceCounter" Version="9.0.2" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Protobuf Include="Protos\node.proto" GrpcServices="Both" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Remove="obj_stuck\**\*.cs" />
+    <EmbeddedResource Remove="obj_stuck\**\*" />
+    <None Remove="obj_stuck\**\*" />
   </ItemGroup>
 
 </Project>

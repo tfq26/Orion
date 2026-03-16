@@ -12,18 +12,18 @@ const Sidebar: Component = () => {
     <aside class="w-64 bg-[#f9fafb] dark:bg-black border-r border-gray-200 dark:border-gray-800 flex flex-col h-screen fixed left-0 top-0 z-50 transition-colors duration-300">
       <div class="p-8 flex items-center justify-between">
         <div class="flex items-center gap-3">
-          <div class="w-8 h-8 bg-blue-600 rounded-sm shadow-sm"></div>
+          <img src="/orion-mark.svg" alt="Orion logo" class="w-9 h-9 rounded-xl shadow-sm ring-1 ring-gray-200/70 dark:ring-gray-800/80" />
           <span class="text-xl font-bold tracking-tight text-gray-900 dark:text-white">Orion</span>
         </div>
-        <button 
+        <button
           onClick={toggleTheme}
           class="p-2 hover:bg-gray-200 dark:hover:bg-gray-800 rounded-sm transition-colors text-gray-500 dark:text-gray-400"
           title={`Switch to ${theme() === 'light' ? 'dark' : 'light'} mode`}
         >
           <Show when={theme() === 'light'} fallback={
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364-6.364l-.707.707M6.343 17.657l-.707.707m12.728 0l-.707-.707M6.343 6.343l-.707-.707M12 8a4 4 0 100 8 4 4 0 000-8z"/></svg>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364-6.364l-.707.707M6.343 17.657l-.707.707m12.728 0l-.707-.707M6.343 6.343l-.707-.707M12 8a4 4 0 100 8 4 4 0 000-8z" /></svg>
           }>
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z"/></svg>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z" /></svg>
           </Show>
         </button>
       </div>

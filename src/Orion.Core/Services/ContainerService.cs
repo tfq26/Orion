@@ -9,6 +9,7 @@ namespace Orion.Core.Services
 {
     public class InstanceResult
     {
+        public bool Success { get; set; }
         public int Port { get; set; }
         public int? ProcessId { get; set; }
     }
@@ -99,10 +100,10 @@ namespace Orion.Core.Services
 
                 await Task.Delay(1000);
                 _logger.LogInformation($"[SIMULATION] Container {containerName} started (simulated) on port {hostPort}");
-                return new InstanceResult { Port = hostPort, ProcessId = Environment.ProcessId };
+                return new InstanceResult { Success = true, Port = hostPort, ProcessId = Environment.ProcessId };
             }
 
-            return new InstanceResult { Port = hostPort, ProcessId = null }; // Docker PID extraction would go here
+            return new InstanceResult { Success = true, Port = hostPort, ProcessId = null }; // Docker PID extraction would go here
         }
 
         public async Task<bool> StopContainerAsync(string containerName)

@@ -1,5 +1,5 @@
 import { Component, createSignal, Switch, Match, Show, For } from 'solid-js';
-import { api } from '../services/api';
+import { api, type LocalUploadEntry } from '../services/api';
 import { OrionButton } from './UI';
 import { DirectoryPickerDialog } from './DirectoryPicker';
 
@@ -11,7 +11,9 @@ interface DeploymentWizardProps {
 const DeploymentWizard: Component<DeploymentWizardProps> = (props) => {
   const [step, setStep] = createSignal(1);
   const [appName, setAppName] = createSignal('');
+  const [sourceMode, setSourceMode] = createSignal<'git' | 'upload'>('git');
   const [repoUrl, setRepoUrl] = createSignal('');
+  const [localFiles, setLocalFiles] = createSignal<LocalUploadEntry[]>([]);
   const [buildCommand, setBuildCommand] = createSignal('npm run build');
   const [runCommand, setRunCommand] = createSignal('npm start');
   const [buildFolder, setBuildFolder] = createSignal('dist');
@@ -19,12 +21,78 @@ const DeploymentWizard: Component<DeploymentWizardProps> = (props) => {
   const [isDeploying, setIsDeploying] = createSignal(false);
   const [error, setError] = createSignal<string | null>(null);
   const [showPicker, setShowPicker] = createSignal(false);
+  let fallbackInput: HTMLInputElement | undefined;
+
+  const inferUploadDefaults = (entries: LocalUploadEntry[]) => {
+    const paths = entries.map((entry) => entry.path);
+    const hasPackageJson = paths.some((path) => path === 'package.json' || path.endsWith('/package.json'));
+    const hasPublicFolder = paths.some((path) => path.startsWith('public/'));
+    const hasBuildFolder = paths.some((path) => path.startsWith('dist/') || path.startsWith('build/'));
+
+    if (!hasPackageJson) {
+      setBuildCommand('');
+      setRunCommand('');
+    }
+
+    if (hasPublicFolder) {
+      setBuildFolder('public');
+    } else if (hasBuildFolder && paths.some((path) => path.startsWith('dist/'))) {
+      setBuildFolder('dist');
+    } else if (hasBuildFolder) {
+      setBuildFolder('build');
+    }
+  };
+
+  const handleLocalFileSelection = (files: FileList | null) => {
+    const entries = Array.from(files || []).map((file) => ({
+      file,
+      path: (file as File & { webkitRelativePath?: string }).webkitRelativePath || file.name
+    }));
+    setLocalFiles(entries);
+    inferUploadDefaults(entries);
+  };
+
+  const handleChooseFolder = async () => {
+    if (!(window as Window & { showDirectoryPicker?: () => Promise<FileSystemDirectoryHandle> }).showDirectoryPicker) {
+      fallbackInput?.click();
+      return;
+    }
+
+    try {
+      const dirHandle = await (window as Window & { showDirectoryPicker: () => Promise<FileSystemDirectoryHandle> }).showDirectoryPicker();
+      const entries: LocalUploadEntry[] = [];
+
+      const walk = async (handle: FileSystemDirectoryHandle, prefix = ''): Promise<void> => {
+        for await (const [, childHandle] of handle.entries()) {
+          if (childHandle.kind === 'file') {
+            const file = await childHandle.getFile();
+            entries.push({
+              file,
+              path: prefix ? `${prefix}/${file.name}` : file.name
+            });
+          } else {
+            await walk(childHandle, prefix ? `${prefix}/${childHandle.name}` : childHandle.name);
+          }
+        }
+      };
+
+      await walk(dirHandle);
+      setLocalFiles(entries);
+      inferUploadDefaults(entries);
+    } catch (err) {
+      if ((err as DOMException)?.name !== 'AbortError') {
+        setError(err instanceof Error ? err.message : 'Failed to read local folder.');
+      }
+    }
+  };
 
   const handleDeploy = async () => {
     setIsDeploying(true);
     setError(null);
     try {
-      const app = await api.createApp(appName(), repoUrl(), buildCommand(), runCommand(), buildFolder());
+      const app = sourceMode() === 'upload'
+        ? await api.createUploadedApp(appName(), localFiles(), buildCommand(), runCommand(), buildFolder())
+        : await api.createApp(appName(), repoUrl(), buildCommand(), runCommand(), buildFolder());
       setFinalUrl(app.url || '');
       await api.triggerBuild(app.id);
       setStep(5); // Success step
@@ -92,14 +160,65 @@ const DeploymentWizard: Component<DeploymentWizardProps> = (props) => {
             <Match when={step() === 2}>
               <div class="animate-in slide-in-from-bottom fade-in duration-400">
                 <label class="text-[10px] font-bold text-blue-600 dark:text-blue-400 uppercase tracking-widest mb-3 block">Deployment Source</label>
-                <h1 class="text-3xl font-bold text-gray-900 dark:text-white tracking-tighter mb-8">Connect your Git repository.</h1>
-                <input 
-                  type="text" 
-                  placeholder="https://github.com/user/repo"
-                  class="w-full bg-white dark:bg-zinc-900 border border-gray-200 dark:border-gray-800 rounded-sm px-6 py-5 text-xl font-semibold text-gray-900 dark:text-white shadow-sm focus:border-blue-500 focus:ring-4 focus:ring-blue-50/50 dark:focus:ring-blue-900/20 outline-none transition-all placeholder:text-gray-300 dark:placeholder:text-gray-700"
-                  value={repoUrl()}
-                  onInput={(e) => setRepoUrl(e.currentTarget.value)}
-                />
+                <h1 class="text-3xl font-bold text-gray-900 dark:text-white tracking-tighter mb-8">Choose where Orion should pull the source from.</h1>
+                <div class="grid grid-cols-2 gap-4 mb-6">
+                  <button
+                    class={`rounded-sm border px-5 py-5 text-left transition-all ${sourceMode() === 'git' ? 'border-blue-300 bg-blue-50 dark:border-blue-800 dark:bg-blue-950/20' : 'border-gray-200 bg-white dark:border-gray-800 dark:bg-zinc-900'}`}
+                    onClick={() => setSourceMode('git')}
+                  >
+                    <div class="text-sm font-bold text-gray-900 dark:text-white">Git Repository</div>
+                    <div class="mt-2 text-xs text-gray-500 dark:text-gray-400">Pull from GitHub or any reachable git remote.</div>
+                  </button>
+                  <button
+                    class={`rounded-sm border px-5 py-5 text-left transition-all ${sourceMode() === 'upload' ? 'border-blue-300 bg-blue-50 dark:border-blue-800 dark:bg-blue-950/20' : 'border-gray-200 bg-white dark:border-gray-800 dark:bg-zinc-900'}`}
+                    onClick={() => setSourceMode('upload')}
+                  >
+                    <div class="text-sm font-bold text-gray-900 dark:text-white">Upload From Device</div>
+                    <div class="mt-2 text-xs text-gray-500 dark:text-gray-400">Deploy a local folder directly for an offline-first workflow.</div>
+                  </button>
+                </div>
+
+                <Show when={sourceMode() === 'git'} fallback={
+                  <div class="rounded-sm border border-dashed border-gray-300 bg-white p-6 dark:border-gray-700 dark:bg-zinc-900">
+                    <label class="mb-4 block text-[10px] font-bold uppercase tracking-widest text-gray-400 dark:text-gray-500">Local Source Folder</label>
+                    <div class="flex items-center gap-3">
+                      <OrionButton variant="primary" onclick={handleChooseFolder}>
+                        Choose Folder
+                      </OrionButton>
+                      <button
+                        type="button"
+                        class="rounded-sm border border-gray-200 px-4 py-3 text-sm font-semibold text-gray-500 transition-colors hover:border-blue-200 hover:text-blue-600 dark:border-gray-800 dark:text-gray-300 dark:hover:border-blue-900 dark:hover:text-blue-400"
+                        onClick={() => fallbackInput?.click()}
+                      >
+                        Browser Fallback
+                      </button>
+                    </div>
+                    <input
+                      ref={(el) => {
+                        fallbackInput = el;
+                        el.setAttribute('webkitdirectory', '');
+                        el.setAttribute('directory', '');
+                      }}
+                      type="file"
+                      multiple
+                      class="hidden"
+                      onChange={(e) => handleLocalFileSelection(e.currentTarget.files)}
+                    />
+                    <div class="mt-4 text-xs text-gray-500 dark:text-gray-400">
+                      {localFiles().length > 0
+                        ? `${localFiles().length} file${localFiles().length === 1 ? '' : 's'} selected from your local folder.`
+                        : 'Choose a folder like `showcase/` and Orion will upload it directly from this device.'}
+                    </div>
+                  </div>
+                }>
+                  <input 
+                    type="text" 
+                    placeholder="https://github.com/user/repo"
+                    class="w-full bg-white dark:bg-zinc-900 border border-gray-200 dark:border-gray-800 rounded-sm px-6 py-5 text-xl font-semibold text-gray-900 dark:text-white shadow-sm focus:border-blue-500 focus:ring-4 focus:ring-blue-50/50 dark:focus:ring-blue-900/20 outline-none transition-all placeholder:text-gray-300 dark:placeholder:text-gray-700"
+                    value={repoUrl()}
+                    onInput={(e) => setRepoUrl(e.currentTarget.value)}
+                  />
+                </Show>
               </div>
             </Match>
 
@@ -136,11 +255,13 @@ const DeploymentWizard: Component<DeploymentWizardProps> = (props) => {
                         value={buildFolder()}
                         onInput={(e) => setBuildFolder(e.currentTarget.value)}
                       />
-                      <OrionButton variant="ghost" onclick={() => setShowPicker(true)}>
-                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
-                          <path d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
-                        </svg>
-                      </OrionButton>
+                      <Show when={sourceMode() === 'git'}>
+                        <OrionButton variant="ghost" onclick={() => setShowPicker(true)}>
+                          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                            <path d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
+                          </svg>
+                        </OrionButton>
+                      </Show>
                     </div>
                   </div>
                 </div>
@@ -158,8 +279,10 @@ const DeploymentWizard: Component<DeploymentWizardProps> = (props) => {
                     <span class="text-lg font-bold text-gray-900 dark:text-white">{appName()}</span>
                   </div>
                   <div class="flex justify-between items-center pb-4 border-b border-gray-50 dark:border-gray-800/50">
-                    <span class="text-[10px] font-bold text-gray-400 dark:text-gray-500 uppercase tracking-widest">Repository URL</span>
-                    <span class="text-sm font-semibold text-blue-600 dark:text-blue-400 truncate max-w-[260px]">{repoUrl()}</span>
+                    <span class="text-[10px] font-bold text-gray-400 dark:text-gray-500 uppercase tracking-widest">Source</span>
+                    <span class="text-sm font-semibold text-blue-600 dark:text-blue-400 truncate max-w-[260px]">
+                      {sourceMode() === 'upload' ? `${localFiles().length} local file${localFiles().length === 1 ? '' : 's'}` : repoUrl()}
+                    </span>
                   </div>
                   <div class="flex justify-between items-center pb-4 border-b border-gray-50 dark:border-gray-800/50">
                     <span class="text-[10px] font-bold text-gray-400 dark:text-gray-500 uppercase tracking-widest">Build Command</span>
@@ -235,6 +358,11 @@ const DeploymentWizard: Component<DeploymentWizardProps> = (props) => {
               variant="primary"
               onclick={step() === 4 ? handleDeploy : () => setStep(step() + 1)}
               class="!px-12 !py-4 !text-base !rounded-sm shadow-lg shadow-blue-100 dark:shadow-blue-900/20"
+              disabled={
+                (step() === 1 && !appName().trim()) ||
+                (step() === 2 && ((sourceMode() === 'git' && !repoUrl().trim()) || (sourceMode() === 'upload' && localFiles().length === 0))) ||
+                isDeploying()
+              }
             >
               <Show when={isDeploying()} fallback={step() === 4 ? 'Start Deployment' : 'Continue Step'}>
                 Deploying...

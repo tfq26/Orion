@@ -28,17 +28,22 @@ namespace Orion.Core.Jobs
 
             while (!stoppingToken.IsCancellationRequested)
             {
+                Job? currentJob = null;
                 try
                 {
                     var job = await _dispatcher.DequeueAsync(stoppingToken);
+                    currentJob = job;
                     _logger.LogInformation($"Processing job {job.Id}...");
 
                     using var scope = _serviceProvider.CreateScope();
                     var buildService = scope.ServiceProvider.GetRequiredService<IBuildService>();
                     var dbService = scope.ServiceProvider.GetRequiredService<IMetadataService>();
+                    var logService = scope.ServiceProvider.GetRequiredService<ILogService>();
 
                     if (job is BuildJob buildJob)
                     {
+                        await logService.LogAsync(buildJob.AppId, buildJob.Id, buildJob.OwnerId, $"[QUEUE] Build job picked up for {buildJob.AppName}.");
+
                         // 1. Update Database (Building)
                         await dbService.UpdateDeploymentStatusAsync(buildJob.Id, DeploymentStatus.Building);
                         
@@ -63,6 +68,9 @@ namespace Orion.Core.Jobs
                             var containerService = scope.ServiceProvider.GetRequiredService<IContainerService>();
                             var imageTag = $"orion/{buildJob.AppName.ToLower()}:latest";
                             var containerName = $"orion-{buildJob.AppName.ToLower()}-{buildJob.Id.ToString()[..8]}";
+
+                            await dbService.UpdateDeploymentStatusAsync(buildJob.Id, DeploymentStatus.Deploying);
+                            await logService.LogAsync(buildJob.AppId, buildJob.Id, buildJob.OwnerId, $"[DEPLOY] Starting runtime for {buildJob.AppName}.");
                             
                             var result = await containerService.StartContainerAsync(imageTag, containerName, secrets);
                             
@@ -79,7 +87,24 @@ namespace Orion.Core.Jobs
                             };
                             await dbService.CreateInstanceAsync(instance);
 
-                            // 6. Update Database (Running)
+                            // 7. Replace older live replicas with the new deployment.
+                            var previousDeployments = (await dbService.GetDeploymentsAsync(buildJob.AppId, buildJob.OwnerId))
+                                .Where(deployment => deployment.Id != buildJob.Id && deployment.Status == DeploymentStatus.Running)
+                                .ToList();
+
+                            foreach (var previousDeployment in previousDeployments)
+                            {
+                                var oldInstances = await dbService.GetInstancesByDeploymentIdAsync(previousDeployment.Id, buildJob.OwnerId);
+                                foreach (var oldInstance in oldInstances)
+                                {
+                                    await containerService.StopContainerAsync(oldInstance.ContainerName);
+                                    await dbService.DeleteInstanceAsync(oldInstance.Id);
+                                }
+
+                                await dbService.UpdateDeploymentStatusAsync(previousDeployment.Id, DeploymentStatus.Paused);
+                            }
+
+                            // 8. Update Database (Running)
                             await dbService.UpdateDeploymentStatusAsync(buildJob.Id, DeploymentStatus.Running, imageTag, result.Port);
                             _logger.LogInformation($"Job {buildJob.Id} finished successfully. (Port: {result.Port})");
                         }
@@ -87,8 +112,9 @@ namespace Orion.Core.Jobs
                         {
                             // 3. Update Database (Failed)
                             await dbService.UpdateDeploymentStatusAsync(buildJob.Id, DeploymentStatus.Failed);
+                            await logService.LogAsync(buildJob.AppId, buildJob.Id, buildJob.OwnerId, $"[BUILD] Build failed for {buildJob.AppName}.", "Error");
                         }
-                         _logger.LogInformation($"Job {job.Id} finished (Success: {success})");
+                        _logger.LogInformation($"Job {job.Id} finished (Success: {success})");
                     }
                 }
                 catch (OperationCanceledException)
@@ -98,6 +124,28 @@ namespace Orion.Core.Jobs
                 catch (Exception ex)
                 {
                     _logger.LogError(ex, "Error processing job.");
+
+                    if (currentJob is BuildJob failedBuildJob)
+                    {
+                        try
+                        {
+                            using var scope = _serviceProvider.CreateScope();
+                            var dbService = scope.ServiceProvider.GetRequiredService<IMetadataService>();
+                            var logService = scope.ServiceProvider.GetRequiredService<ILogService>();
+
+                            await dbService.UpdateDeploymentStatusAsync(failedBuildJob.Id, DeploymentStatus.Failed);
+                            await logService.LogAsync(
+                                failedBuildJob.AppId,
+                                failedBuildJob.Id,
+                                failedBuildJob.OwnerId,
+                                $"[WORKER] Build job crashed: {ex.Message}",
+                                "Error");
+                        }
+                        catch (Exception nestedEx)
+                        {
+                            _logger.LogError(nestedEx, "Failed to persist job failure state.");
+                        }
+                    }
                 }
             }
 

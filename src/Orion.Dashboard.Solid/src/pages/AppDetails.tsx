@@ -1,7 +1,7 @@
 import { createResource, createSignal, For, Show, Component, onCleanup, createEffect } from 'solid-js';
 import { useParams, A } from '@solidjs/router';
 import { OrionBadge, OrionButton, OrionCard } from '../components/UI';
-import { api, App } from '../services/api';
+import { api, App, AppLogEntry, Deployment } from '../services/api';
 import { useAuth } from '../contexts/AuthContext';
 import { MetricsGraph } from '../components/MetricsGraph';
 import { DirectoryPickerDialog } from '../components/DirectoryPicker';
@@ -14,6 +14,7 @@ const AppDetails: Component = () => {
     // Fetch app data & metrics
     const [app] = createResource(() => api.getApp(params.id || ''));
     const [metrics, { refetch }] = createResource(() => api.getAppMetrics(params.id || ''));
+    const [deployments, { refetch: refetchDeployments }] = createResource(() => params.id || '', api.getDeployments);
     
     // Signals for new features
     const [logs, setLogs] = createSignal<string[]>([]);
@@ -47,16 +48,19 @@ const AppDetails: Component = () => {
     };
     
     const timer = setInterval(refetch, 5000);
+    const deploymentTimer = setInterval(() => {
+        if (params.id) refetchDeployments();
+    }, 3000);
     
     // Connect to real logs stream
     createEffect(() => {
         if (!params.id) return;
-        const cleanup = api.streamAppLogs(params.id, (log) => {
-            const formatted = `[${new Date(log.Timestamp).toLocaleTimeString()}] ${log.Level.toUpperCase()}: ${log.Message}`;
+        const cleanup = api.streamAppLogs(params.id, (log: AppLogEntry) => {
+            const formatted = `[${new Date(log.timestamp).toLocaleTimeString()}] ${log.level.toUpperCase()}: ${log.message}`;
             setLogs(prev => [...prev.slice(-100), formatted]);
             
             // Auto-detect build completion or progress
-            if (log.Message.toLowerCase().includes('successful') || log.Message.toLowerCase().includes('started instance')) {
+            if (log.message.toLowerCase().includes('successful') || log.message.toLowerCase().includes('started instance')) {
                 setIsBuilding(false);
             }
         });
@@ -64,6 +68,29 @@ const AppDetails: Component = () => {
     });
 
     onCleanup(() => clearInterval(timer));
+    onCleanup(() => clearInterval(deploymentTimer));
+
+    const getLatestDeployment = (): Deployment | undefined => {
+        const list = deployments();
+        if (!list?.length) return undefined;
+        return [...list].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())[0];
+    };
+
+    createEffect(() => {
+        const latest = getLatestDeployment();
+        if (!latest) return;
+
+        if (latest.status === 'Pending' || latest.status === 'Building' || latest.status === 'Deploying') {
+            setIsBuilding(true);
+            return;
+        }
+
+        setIsBuilding(false);
+
+        if (latest.status === 'Failed') {
+            setCurrentTab('Logs');
+        }
+    });
 
     const handleRedeploy = async () => {
         setIsBuilding(true);
@@ -71,11 +98,31 @@ const AppDetails: Component = () => {
         setLogs([]);
         
         try {
-            await api.triggerBuild(params.id || '');
+            const deployment = await api.triggerBuild(params.id || '');
+            setLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] INFO: Build queued (${deployment.id.slice(0, 8)})`]);
+            await refetchDeployments();
         } catch (e) {
             setLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] ERROR: ${e instanceof Error ? e.message : 'Failed to trigger build'}`]);
             setIsBuilding(false);
         }
+    };
+
+    const getDeploymentTone = () => {
+        const latest = getLatestDeployment();
+        if (!latest) return 'idle';
+        if (latest.status === 'Failed') return 'failed';
+        if (latest.status === 'Pending' || latest.status === 'Building' || latest.status === 'Deploying') return 'building';
+        return 'running';
+    };
+
+    const getDeploymentLabel = () => {
+        const latest = getLatestDeployment();
+        if (!latest) return 'Awaiting Deployment';
+        if (latest.status === 'Failed') return 'Build Failed';
+        if (latest.status === 'Pending') return 'Queued';
+        if (latest.status === 'Building') return 'Build In Progress';
+        if (latest.status === 'Deploying') return 'Deploying';
+        return 'Instance Logs Stream';
     };
 
     const handleUpdateSecrets = async () => {
@@ -113,15 +160,15 @@ const AppDetails: Component = () => {
                         <OrionButton variant="ghost" onclick={handleRedeploy} disabled={isBuilding() || isEditing()}>
                             {isBuilding() ? 'Building...' : 'Redeploy'}
                         </OrionButton>
-                        <OrionButton variant="primary" onclick={() => setIsEditing(!isEditing())}>
-                            {isEditing() ? 'Cancel Editing' : 'Manage Instance'}
+                        <OrionButton variant="primary" onclick={() => setCurrentTab('Settings')}>
+                            Manage Instance
                         </OrionButton>
                     </div>
                 </div>
             </header>
 
-            <div class="flex gap-8 border-b border-gray-100 dark:border-gray-800 mb-10">
-                <For each={['Overview', 'Logs', 'Telemetry', 'Secrets']}>
+            <div class="flex gap-8 border-b border-gray-100 dark:border-gray-800 mb-10 overflow-x-auto no-scrollbar">
+                <For each={['Overview', 'Logs', 'Telemetry', 'Secrets', 'Settings']}>
                     {tab => (
                         <button
                             class={`
@@ -142,81 +189,12 @@ const AppDetails: Component = () => {
                         <OrionCard title="Application Metadata">
                             <div class="space-y-4">
                                 <SpecItem label="Status" value={app()?.status || 'Active'} color="cyan" />
-                                <SpecItem label="Source Repository" value={app()?.repoUrl?.split('/').pop()?.replace('.git', '') || '—'} />
+                                <SpecItem label="Source Repository" value={app()?.repoUrl?.startsWith('orion-upload://') ? 'Local Upload' : app()?.repoUrl?.split('/').pop()?.replace('.git', '') || '—'} />
                                 <SpecItem label="Public URL" value={app()?.url || '—'} color="cyan" />
                                 <SpecItem label="Owner" value={getOwnerName()} />
                             </div>
                         </OrionCard>
 
-                        <OrionCard title="Build Configuration">
-                            <div class="space-y-4">
-                                <Show when={isEditing()} fallback={
-                                    <>
-                                        <SpecItem label="Build Command" value={app()?.buildCommand || 'npm run build'} color="cyan" />
-                                        <SpecItem label="Run Command" value={app()?.runCommand || 'npm start'} color="cyan" />
-                                        <SpecItem label="Build Folder" value={app()?.buildFolder || 'dist'} color="cyan" />
-                                    </>
-                                }>
-                                    <div class="space-y-4 pt-2">
-                                        <div>
-                                            <label class="text-[10px] font-bold text-gray-400 dark:text-gray-500 uppercase tracking-widest mb-1.5 block">Build Command</label>
-                                            <input 
-                                                type="text" 
-                                                class="w-full bg-gray-50 dark:bg-zinc-900 border border-gray-100 dark:border-gray-800 rounded-sm px-3 py-2 text-sm font-semibold text-gray-900 dark:text-white outline-none focus:border-blue-500 transition-all"
-                                                value={editCommand()}
-                                                onInput={(e) => setEditCommand(e.currentTarget.value)}
-                                            />
-                                        </div>
-                                        <div>
-                                            <label class="text-[10px] font-bold text-gray-400 dark:text-gray-500 uppercase tracking-widest mb-1.5 block">Run Command</label>
-                                            <input 
-                                                type="text" 
-                                                class="w-full bg-gray-50 dark:bg-zinc-900 border border-gray-100 dark:border-gray-800 rounded-sm px-3 py-2 text-sm font-semibold text-gray-900 dark:text-white outline-none focus:border-blue-500 transition-all"
-                                                value={editRun()}
-                                                onInput={(e) => setEditRun(e.currentTarget.value)}
-                                            />
-                                        </div>
-                                        <div>
-                                            <label class="text-[10px] font-bold text-gray-400 dark:text-gray-500 uppercase tracking-widest mb-1.5 block">Build Folder</label>
-                                            <div class="flex gap-2">
-                                                <input 
-                                                    type="text" 
-                                                    class="flex-1 bg-gray-50 dark:bg-zinc-900 border border-gray-100 dark:border-gray-800 rounded-sm px-3 py-2 text-sm font-semibold text-gray-900 dark:text-white outline-none focus:border-blue-500 transition-all"
-                                                    value={editFolder()}
-                                                    onInput={(e) => setEditFolder(e.currentTarget.value)}
-                                                />
-                                                <OrionButton variant="ghost" class="shrink-0" onclick={() => setShowPicker(true)}>
-                                                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
-                                                        <path d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
-                                                    </svg>
-                                                </OrionButton>
-                                            </div>
-                                        </div>
-                                        <OrionButton variant="primary" class="w-full mt-2" onclick={async () => {
-                                            try {
-                                                const currentApp = app();
-                                                if (!currentApp) return;
-                                                await api.updateApp(currentApp.id, {
-                                                    ...currentApp,
-                                                    buildCommand: editCommand(),
-                                                    runCommand: editRun(),
-                                                    buildFolder: editFolder()
-                                                });
-                                                setIsEditing(false);
-                                                // Trigger a refetch if needed, though app() is a resource
-                                                // createResource auto-refetches if its source changes, 
-                                                // but here the source is the ID which hasn't changed.
-                                                // We can use the mutated value or refetch.
-                                                window.location.reload(); // Simple way for now
-                                            } catch (e) {
-                                                alert('Failed to update configuration.');
-                                            }
-                                        }}>Save Configuration</OrionButton>
-                                    </div>
-                                </Show>
-                            </div>
-                        </OrionCard>
-                        
                         <div class="grid grid-cols-2 gap-4">
                             <div class="bg-blue-50/30 dark:bg-blue-900/10 border border-blue-100 dark:border-blue-900/30 p-6 rounded-sm shadow-sm">
                                 <div class="text-[10px] font-bold text-gray-400 dark:text-gray-500 uppercase tracking-widest mb-2">CPU Utilization</div>
@@ -295,17 +273,26 @@ const AppDetails: Component = () => {
                 <Show when={currentTab() === 'Logs'}>
                     <div class="col-span-2 bg-[#020617] border border-gray-800 p-8 rounded-sm font-mono text-[13px] leading-relaxed shadow-2xl min-h-[500px] overflow-y-auto">
                         <div class="flex items-center gap-3 mb-6 pb-4 border-b border-gray-800/50">
-                            <div class={`w-2 h-2 rounded-full animate-pulse shadow-sm ${isBuilding() ? 'bg-amber-500 shadow-amber-500/50' : 'bg-emerald-500 shadow-emerald-500/50'}`}></div>
+                            <div class={`w-2 h-2 rounded-full shadow-sm ${getDeploymentTone() === 'building' ? 'animate-pulse bg-amber-500 shadow-amber-500/50' : ''} ${getDeploymentTone() === 'failed' ? 'bg-red-500 shadow-red-500/50' : ''} ${getDeploymentTone() === 'running' ? 'bg-emerald-500 shadow-emerald-500/50' : ''} ${getDeploymentTone() === 'idle' ? 'bg-slate-500 shadow-slate-500/50' : ''}`}></div>
                             <span class="text-xs font-bold uppercase tracking-widest text-slate-400">
-                                {isBuilding() ? 'Build In Progress' : 'Instance Logs Stream'}
+                                {getDeploymentLabel()}
                             </span>
                         </div>
+
+                        <Show when={getLatestDeployment()?.status === 'Failed'}>
+                            <div class="mb-6 rounded-sm border border-red-900/70 bg-red-950/40 px-4 py-3 text-red-200">
+                                <div class="text-[10px] font-bold uppercase tracking-[0.2em] text-red-300">Last deployment failed</div>
+                                <div class="mt-1 text-[12px] text-red-200/90">
+                                    Review the build logs below to find the failing command or missing dependency.
+                                </div>
+                            </div>
+                        </Show>
                         
                         <div class="space-y-1.5">
                             <Show when={logs().length === 0}>
                                 <div class="text-slate-600 italic py-20 text-center">
                                     <p class="mb-2 uppercase text-[10px] font-bold tracking-[0.2em] opacity-40">Zero state reached</p>
-                                    <p class="text-[11px]">Click "Redeploy" to initiate a build and view output logs.</p>
+                                    <p class="text-[11px]">Click "Redeploy" to initiate a build and stream terminal output here.</p>
                                 </div>
                             </Show>
                             <For each={logs()}>
@@ -355,6 +342,107 @@ const AppDetails: Component = () => {
                                     </For>
                                 </div>
                             </div>
+                        </div>
+                    </div>
+                </Show>
+
+                <Show when={currentTab() === 'Settings'}>
+                    <div class="col-span-2 grid grid-cols-1 md:grid-cols-2 gap-6 items-start">
+                        <div class="space-y-6">
+                            <OrionCard title="Build Configuration">
+                                <div class="space-y-4 pt-2">
+                                    <div>
+                                        <label class="text-[10px] font-bold text-gray-400 dark:text-gray-500 uppercase tracking-widest mb-1.5 block">Build Command</label>
+                                        <input 
+                                            type="text" 
+                                            class="w-full bg-gray-50 dark:bg-zinc-900 border border-gray-100 dark:border-gray-800 rounded-sm px-3 py-2 text-sm font-semibold text-gray-900 dark:text-white outline-none focus:border-blue-500 transition-all placeholder:text-gray-400 dark:placeholder:text-gray-600"
+                                            value={editCommand()}
+                                            placeholder="e.g. npm run build"
+                                            onInput={(e) => setEditCommand(e.currentTarget.value)}
+                                        />
+                                    </div>
+                                    <div>
+                                        <label class="text-[10px] font-bold text-gray-400 dark:text-gray-500 uppercase tracking-widest mb-1.5 block">Run Command</label>
+                                        <input 
+                                            type="text" 
+                                            class="w-full bg-gray-50 dark:bg-zinc-900 border border-gray-100 dark:border-gray-800 rounded-sm px-3 py-2 text-sm font-semibold text-gray-900 dark:text-white outline-none focus:border-blue-500 transition-all placeholder:text-gray-400 dark:placeholder:text-gray-600"
+                                            value={editRun()}
+                                            placeholder="e.g. npm start"
+                                            onInput={(e) => setEditRun(e.currentTarget.value)}
+                                        />
+                                    </div>
+                                    <div>
+                                        <label class="text-[10px] font-bold text-gray-400 dark:text-gray-500 uppercase tracking-widest mb-1.5 block">Build Folder</label>
+                                        <div class="flex gap-2">
+                                            <input 
+                                                type="text" 
+                                                class="flex-1 bg-gray-50 dark:bg-zinc-900 border border-gray-100 dark:border-gray-800 rounded-sm px-3 py-2 text-sm font-semibold text-gray-900 dark:text-white outline-none focus:border-blue-500 transition-all placeholder:text-gray-400 dark:placeholder:text-gray-600"
+                                                value={editFolder()}
+                                                placeholder="e.g. dist"
+                                                onInput={(e) => setEditFolder(e.currentTarget.value)}
+                                            />
+                                            <OrionButton variant="ghost" class="shrink-0" onclick={() => setShowPicker(true)}>
+                                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                                                    <path d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
+                                                </svg>
+                                            </OrionButton>
+                                        </div>
+                                    </div>
+                                    <OrionButton variant="primary" class="w-full mt-2" onclick={async () => {
+                                        try {
+                                            const currentApp = app();
+                                            if (!currentApp) return;
+                                            await api.updateApp(currentApp.id, {
+                                                ...currentApp,
+                                                buildCommand: editCommand(),
+                                                runCommand: editRun(),
+                                                buildFolder: editFolder()
+                                            });
+                                            alert('Build configuration saved.');
+                                        } catch (e) {
+                                            alert('Failed to update configuration.');
+                                        }
+                                    }}>Save Configuration</OrionButton>
+                                </div>
+                            </OrionCard>
+                        </div>
+
+                        <div class="space-y-6">
+                            <OrionCard title="General Settings">
+                                <div class="space-y-4 pt-2">
+                                    <div>
+                                        <label class="text-[10px] font-bold text-gray-400 dark:text-gray-500 uppercase tracking-widest mb-1.5 block">Application Name</label>
+                                        <input 
+                                            type="text" 
+                                            class="w-full bg-gray-50 dark:bg-zinc-900 border border-gray-100 dark:border-gray-800 rounded-sm px-3 py-2 text-sm font-semibold text-gray-900 dark:text-white outline-none focus:border-blue-500 transition-all"
+                                            value={app()?.name || ''}
+                                            disabled={true}
+                                        />
+                                        <p class="mt-1.5 text-[10px] text-gray-500 italic">Immutable unique identifier for the Orion subnet.</p>
+                                    </div>
+                                    <div>
+                                        <label class="text-[10px] font-bold text-gray-400 dark:text-gray-500 uppercase tracking-widest mb-1.5 block">Repository Source</label>
+                                        <input 
+                                            type="text" 
+                                            class="w-full bg-gray-50 dark:bg-zinc-900 border border-gray-100 dark:border-gray-800 rounded-sm px-3 py-2 text-sm font-semibold text-gray-400 dark:text-gray-500 outline-none cursor-not-allowed"
+                                            value={app()?.repoUrl?.startsWith('orion-upload://') ? 'Local Upload Source' : app()?.repoUrl || ''}
+                                            disabled={true}
+                                        />
+                                    </div>
+                                    <div class="pt-4 border-t border-gray-50 dark:border-gray-800/50 mt-4">
+                                        <OrionButton variant="ghost" class="w-full text-red-500 border-red-100 dark:border-red-900/30 hover:bg-red-50 dark:hover:bg-red-950/20" onclick={async () => {
+                                            if (confirm('Are you absolutely sure you want to delete this application? This action cannot be undone.')) {
+                                                try {
+                                                    await api.deleteApp(params.id || '');
+                                                    window.location.href = '/apps';
+                                                } catch (e) {
+                                                    alert(e instanceof Error ? e.message : 'Failed to delete application. Please try again.');
+                                                }
+                                            }
+                                        }}>Delete Application</OrionButton>
+                                    </div>
+                                </div>
+                            </OrionCard>
                         </div>
                     </div>
                 </Show>

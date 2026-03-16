@@ -108,7 +108,7 @@ namespace Orion.Core.Services
                 return new BlobMetadata
                 {
                     Path = path,
-                    Size = response.ContentLength,
+                    SizeBytes = response.ContentLength,
                     LastModified = response.LastModified,
                     ContentType = response.Headers.ContentType,
                     ETag = response.ETag

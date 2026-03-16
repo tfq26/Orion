@@ -1,0 +1,18 @@
+[package]
+name = "orion-desktop"
+version = "0.1.0"
+description = "Orion desktop control plane for Linux and Windows"
+authors = ["Orion Cloud Team"]
+edition = "2021"
+
+[lib]
+name = "orion_desktop_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2.0.3", features = [] }
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tauri = { version = "2.1.1", features = [] }

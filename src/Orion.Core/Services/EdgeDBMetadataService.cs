@@ -43,8 +43,8 @@ namespace Orion.Core.Services
                 query += " FILTER .owner_id = <str>$userId";
             }
             
-            var apps = await _client.QueryAsync<App>(query, new Dictionary<string, object?> { { "userId", userId } });
-            return apps;
+            var results = await _client.QueryAsync<App>(query, new Dictionary<string, object?> { { "userId", userId } });
+            return results.Where(a => a != null)!;
         }
 
         public async Task CreateAppAsync(App app)
@@ -102,6 +102,12 @@ namespace Orion.Core.Services
             });
         }
 
+        public async Task DeleteAppAsync(Guid appId)
+        {
+            var query = "DELETE App FILTER .id = <uuid>$id";
+            await _client.ExecuteAsync(query, new Dictionary<string, object?> { { "id", appId } });
+        }
+
         public async Task<App?> GetAppByNameAsync(string name, string? userId = null)
         {
             var query = "SELECT App { id, name, repo_url, build_command, run_command, build_folder, required_cpu_cores, required_memory_mb, owner_id } FILTER .name = <str>$name";
@@ -116,7 +122,8 @@ namespace Orion.Core.Services
         public async Task<IEnumerable<Deployment>> GetDeploymentsAsync(Guid appId, string? userId = null)
         {
             var query = "SELECT Deployment { id, status, created_at, image_tag, port, owner_id } FILTER .app.id = <uuid>$appId";
-            return await _client.QueryAsync<Deployment>(query, new Dictionary<string, object?> { { "appId", appId } });
+            var results = await _client.QueryAsync<Deployment>(query, new Dictionary<string, object?> { { "appId", appId } });
+            return results.Where(d => d != null)!;
         }
 
         public async Task CreateDeploymentAsync(Deployment deployment)
@@ -169,14 +176,15 @@ namespace Orion.Core.Services
         public async Task<IEnumerable<Deployment>> GetActiveDeploymentsAsync(string? userId = null)
         {
             var query = "SELECT Deployment { id, status, created_at, image_tag, port, owner_id } FILTER .status = 'Running'";
-            return await _client.QueryAsync<Deployment>(query);
+            var results = await _client.QueryAsync<Deployment>(query);
+            return results.Where(d => d != null)!;
         }
 
         public async Task<Dictionary<string, string>> GetSecretsAsync(Guid appId, string? userId = null)
         {
             var query = "SELECT Secret { key, encrypted_value } FILTER .app.id = <uuid>$appId";
-            var secrets = await _client.QueryAsync<SecretProxy>(query, new Dictionary<string, object?> { { "appId", appId } });
-            return secrets.ToDictionary(s => s.Key, s => s.EncryptedValue);
+            var results = await _client.QueryAsync<SecretProxy>(query, new Dictionary<string, object?> { { "appId", appId } });
+            return results.Where(s => s != null).ToDictionary(s => s!.Key, s => s!.EncryptedValue);
         }
 
         private class SecretProxy { public string Key { get; set; } = ""; public string EncryptedValue { get; set; } = ""; }
@@ -247,9 +255,9 @@ namespace Orion.Core.Services
         {
             var query = "SELECT Instance { id, app := { id }, deployment := { id }, container_name, port, process_id, assigned_cpu_cores, assigned_memory_mb, status, created_at, owner_id } FILTER .status = 'Running'";
             var results = await _client.QueryAsync<InstanceProxy>(query);
-            return results.Select(r => new Instance 
+            return results.Where(r => r != null).Select(r => new Instance 
             {
-                Id = r.Id,
+                Id = r!.Id,
                 AppId = r.App.Id,
                 DeploymentId = r.Deployment.Id,
                 ContainerName = r.ContainerName,
@@ -283,9 +291,9 @@ namespace Orion.Core.Services
         {
             var query = "SELECT Instance { id, app := { id }, deployment := { id }, container_name, port, process_id, assigned_cpu_cores, assigned_memory_mb, status, created_at, owner_id } FILTER .deployment.id = <uuid>$depId";
             var results = await _client.QueryAsync<InstanceProxy>(query, new Dictionary<string, object?> { { "depId", deploymentId } });
-            return results.Select(r => new Instance 
+            return results.Where(r => r != null).Select(r => new Instance 
             {
-                Id = r.Id,
+                Id = r!.Id,
                 AppId = r.App.Id,
                 DeploymentId = r.Deployment.Id,
                 ContainerName = r.ContainerName,
@@ -302,10 +310,10 @@ namespace Orion.Core.Services
         public async Task<IEnumerable<Peer>> GetPeersAsync()
         {
             var query = "SELECT Peer { id, name, ip_address, status, tags, last_seen }";
-            var peers = await _client.QueryAsync<PeerProxy>(query);
-            return peers.Select(p => new Peer
+            var results = await _client.QueryAsync<PeerProxy>(query);
+            return results.Where(p => p != null).Select(p => new Peer
             {
-                Id = p.Id,
+                Id = p!.Id,
                 Name = p.Name,
                 IpAddress = p.IpAddress,
                 Status = p.Status,

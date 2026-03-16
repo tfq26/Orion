@@ -27,7 +27,7 @@ namespace Orion.Core.Services
             _engine = new Engine();
         }
 
-        public async Task<InstanceResult> StartContainerAsync(string imageTag, string containerName, IDictionary<string, string>? envVars = null)
+        public async Task<InstanceResult> StartContainerAsync(string imageTag, string containerName, IDictionary<string, string>? envVars = null, int? cpuCores = null, int? memoryMb = null)
         {
             string wasmPath = imageTag;
             byte[]? wasmBytes = null;
@@ -97,7 +97,7 @@ namespace Orion.Core.Services
                 }
             }, cts.Token);
 
-            return new InstanceResult { Port = hostPort, ProcessId = Environment.ProcessId };
+            return new InstanceResult { Success = true, Port = hostPort, ProcessId = Environment.ProcessId };
         }
 
         public Task<bool> StopContainerAsync(string containerName)

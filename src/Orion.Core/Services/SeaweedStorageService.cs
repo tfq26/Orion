@@ -1,8 +1,10 @@
 using System;
 using System.IO;
+using System.Linq;
 using System.Net.Http;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
+using Orion.Core.Models;
 
 namespace Orion.Core.Services
 {
@@ -25,9 +27,9 @@ namespace Orion.Core.Services
                 Directory.CreateDirectory(_basePath);
         }
 
-        public async Task SaveBlobAsync(string path, byte[] data)
+        public async Task SaveBlobAsync(string path, byte[] data, string? contentType = null)
         {
-            _logger.LogInformation($"[STORAGE] Saving blob to {path} (Size: {data.Length} bytes)");
+            _logger.LogInformation($"[STORAGE] Saving blob to {path} (Size: {data.Length} bytes, Type: {contentType ?? "default"})");
             
             // Simulation: Save to local directory
             var fullPath = Path.Combine(_basePath, path);
@@ -36,10 +38,8 @@ namespace Orion.Core.Services
                 Directory.CreateDirectory(dir);
 
             await File.WriteAllBytesAsync(fullPath, data);
-
-            // In real SeaweedFS, we would do:
-            // var content = new ByteArrayContent(data);
-            // await _httpClient.PostAsync($"{_filerUrl}/{path}", content);
+            
+            // In a real implementation, we'd store the contentType as metadata
         }
 
         public async Task<byte[]> GetBlobAsync(string path)
@@ -53,18 +53,46 @@ namespace Orion.Core.Services
             return await File.ReadAllBytesAsync(fullPath);
         }
 
-        public async Task DeleteBlobAsync(string path)
+        public Task DeleteBlobAsync(string path)
         {
             _logger.LogInformation($"[STORAGE] Deleting blob at {path}");
             var fullPath = Path.Combine(_basePath, path);
             if (File.Exists(fullPath))
                 File.Delete(fullPath);
+            return Task.CompletedTask;
         }
 
         public Task<bool> ExistsAsync(string path)
         {
             var fullPath = Path.Combine(_basePath, path);
             return Task.FromResult(File.Exists(fullPath));
+        }
+
+        public Task<System.Collections.Generic.IEnumerable<string>> ListBlobsAsync(string prefix)
+        {
+            _logger.LogInformation($"[STORAGE] Listing blobs with prefix: {prefix}");
+            var searchPath = Path.Combine(_basePath, prefix);
+            if (!Directory.Exists(searchPath))
+                return Task.FromResult(System.Linq.Enumerable.Empty<string>());
+
+            var files = Directory.GetFiles(searchPath, "*", SearchOption.AllDirectories);
+            return Task.FromResult(files.Select(f => Path.GetRelativePath(_basePath, f)));
+        }
+
+        public Task<BlobMetadata?> GetBlobMetadataAsync(string path)
+        {
+            _logger.LogInformation($"[STORAGE] Getting metadata for {path}");
+            var fullPath = Path.Combine(_basePath, path);
+            if (!File.Exists(fullPath))
+                return Task.FromResult<BlobMetadata?>(null);
+
+            var info = new FileInfo(fullPath);
+            return Task.FromResult<BlobMetadata?>(new BlobMetadata 
+            { 
+                Path = path,
+                SizeBytes = info.Length,
+                LastModified = info.LastWriteTimeUtc
+            });
         }
     }
 }

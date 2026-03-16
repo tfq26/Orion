@@ -165,5 +165,33 @@ namespace Orion.Core.Services
             metrics.Reverse();
             return metrics;
         }
+
+        public async Task DeleteAppTelemetryAsync(Guid appId, string? userId = null)
+        {
+            using var connection = new DuckDBConnection(_connectionString);
+            await connection.OpenAsync();
+
+            using var deleteLogs = connection.CreateCommand();
+            var deleteLogsSql = "DELETE FROM logs WHERE app_id = ?";
+            deleteLogs.Parameters.Add(new DuckDBParameter(appId));
+            if (!string.IsNullOrEmpty(userId))
+            {
+                deleteLogsSql += " AND owner_id = ?";
+                deleteLogs.Parameters.Add(new DuckDBParameter(userId));
+            }
+            deleteLogs.CommandText = deleteLogsSql;
+            await deleteLogs.ExecuteNonQueryAsync();
+
+            using var deleteMetrics = connection.CreateCommand();
+            var deleteMetricsSql = "DELETE FROM metrics WHERE app_id = ?";
+            deleteMetrics.Parameters.Add(new DuckDBParameter(appId));
+            if (!string.IsNullOrEmpty(userId))
+            {
+                deleteMetricsSql += " AND owner_id = ?";
+                deleteMetrics.Parameters.Add(new DuckDBParameter(userId));
+            }
+            deleteMetrics.CommandText = deleteMetricsSql;
+            await deleteMetrics.ExecuteNonQueryAsync();
+        }
     }
 }
