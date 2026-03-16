@@ -108,12 +108,30 @@ function signalChild(child, signal = 'SIGTERM') {
     }
 }
 
-async function terminateChild(child, name) {
+async function terminateChild(child, name, reason) {
     if (!isChildRunning(child)) {
         return;
     }
 
     console.log(`[BOOTSTRAP] Stopping ${name}...`);
+    
+    // On Windows, if we're shutting down due to SIGINT (Ctrl+C), the terminal 
+    // sends the signal to the entire process group. We should give the child 
+    // processes a moment to exit gracefully from that signal before we try 
+    // to forcefully kill them, which can cause race-condition errors in 
+    // WebView2/Chromium (like ERROR_CLASS_DOES_NOT_EXIST).
+    if (process.platform === 'win32' && reason === 'SIGINT') {
+        const start = Date.now();
+        // Wait up to 2 seconds for natural exit from the console signal
+        while (isChildRunning(child) && Date.now() - start < 2000) {
+            await delay(100);
+        }
+    }
+
+    if (!isChildRunning(child)) {
+        return;
+    }
+
     signalChild(child, 'SIGTERM');
 
     const start = Date.now();
@@ -189,10 +207,12 @@ async function startSystem() {
 
         shuttingDown = true;
         console.log(`[BOOTSTRAP] Shutting down${reason ? ` (${reason})` : ''}...`);
-        await Promise.all([
-            terminateChild(api, 'Orion.Api'),
-            terminateChild(dashboard, dashboardLabel)
-        ]);
+        
+        // Use a conservative order: stop dashboard (the UI) first, 
+        // then the API (the backend).
+        await terminateChild(dashboard, dashboardLabel, reason);
+        await terminateChild(api, 'Orion.Api', reason);
+
         process.exit(exitCode);
     };
 
