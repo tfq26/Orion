@@ -10,9 +10,21 @@ fn supported_platform() -> &'static str {
 
 #[cfg(any(target_os = "windows", target_os = "linux"))]
 pub fn run() {
-    tauri::Builder::default()
+    let mut builder = tauri::Builder::default()
+        .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_deep_link::init())
+        .setup(|app| {
+            #[cfg(any(target_os = "windows", target_os = "linux"))]
+            {
+                app.deep_link().register_all()?;
+            }
+
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![supported_platform])
-        .run(tauri::generate_context!())
+        ;
+
+    builder.run(tauri::generate_context!())
         .expect("failed to run Orion desktop");
 }
 
